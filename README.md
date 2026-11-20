@@ -31,31 +31,31 @@ Plataforma pessoal e colaborativa para roleplay imersivo e simulação de RPG de
 ## 🛠️ Stack & Infraestrutura
 
 - **Frontend:** React + Vite (JavaScript/JSX) + Tailwind CSS
-- **Backend / Persistência:** Firebase (reaproveitando o projeto `storycraft-a5f7c` com coleções isoladas sob o prefixo `airpg_`)
-  - `airpg_profiles`: Galeria de bots/cenários criados ou importados.
-  - `airpg_personas`: Perfis de jogador (User Personas).
-  - `airpg_chats`: Sessões ativas (modo, mensagens recentes, Chronicle e Vault).
+- **Persistência local:** `localStorage` para configurações BYOK, perfis, persona, ficha e dados de conversa/memória.
+- **Firebase:** autenticação anônima e Firestore com coleções `airpg_profiles` e `airpg_chats`; há gravação cloud, mas resta integrar a restauração/sincronização completa. Personas ficam locais; Firebase Storage para avatares ainda não está implementado.
 
 ---
 
 ## 🗺️ Roadmap Vertical (Do Zero ao MVP Jogável)
 
-- [ ] **Passo 1: Fundação, Multi-Provider BYOK e Casca da Interface**
-  - Inicialização do projeto Vite + React + Tailwind dentro de `AIRPG/`.
-  - Modal de configuração de Chaves API (`OpenRouter`, `Groq`, `Google Gemini`) salvas no `localStorage` + seletor de modelo ativo.
-  - Layout base estilo app de roleplay: Sidebar de Perfis/Chats, Área Central de Narrativa e Painel Direito contextual (Ficha/Vault).
-- [ ] **Passo 2: Motor de Inferência Multi-Provider & Parser `<state_update>`**
-  - Serviço unificado (`llmService.js`) capaz de conversar com OpenRouter, Groq e Gemini usando a mesma interface.
-  - Construtor dinâmico de System Prompt (alternando entre diretriz *Freeroam* e *RPG Hardcore*).
-  - Interceptor de resposta para separar texto narrativo e mutações JSON ocultas.
-- [ ] **Passo 3: Galeria de Perfis, User Personas & Mecanismo Sanguessuga**
-  - CRUD de Perfis (Nome, Avatar, Personalidade, Cenário, First Message, Exemplos de Diálogo) e User Personas.
-  - Módulo Sanguessuga: importador de arquivos JSON/PNG (Character Card V2), gerador de Bookmarklet para captura rápida em sites externos e conversor de texto bruto via IA.
-- [ ] **Passo 4: Sistema de Memória — The Vault (Pescador de Tags)**
-  - Implementação do extrator de palavras-chave do turno atual para injetar apenas as Caixas de Lore relevantes no contexto.
-  - Aplicação automática das `memory_mutations` retornadas pela IA.
-- [ ] **Passo 5: Motor Determinístico (Modo RPG Hardcore)**
-  - Sistema de rolagens (`d20`/`d100`), atributos e cálculo de CD antes do envio do prompt, injetando o resultado mecânico imutável para a IA narrar.
-- [ ] **Passo 6: Integração Firebase (`storycraft-a5f7c`) & The Chronicle**
-  - Plug-in da camada Firebase (Auth + Firestore `airpg_*` + Storage para avatares) reaproveitando a configuração base do `@Storycraft`.
-  - Rotina de compressão recursiva de turnos antigos para o *Chronicle*.
+Legenda: **[x] implementado no código** · **[~] parcial** · **[ ] pendente**. Situação por inspeção do repositório em 2026-11-20; não representa validação ponta a ponta.
+
+- [x] **Passo 1: Fundação, BYOK e interface**
+  - App Vite/React, configuração de modelos/chaves no `localStorage` e interface com perfis, chat e painéis contextuais.
+- [x] **Passo 2: Inferência e `<state_update>`**
+  - Serviço para OpenRouter, Groq e Gemini; prompts Freeroam/Hardcore; parser que separa narrativa e mutações.
+- [~] **Passo 3: Perfis, User Persona e Sanguessuga**
+  - Perfis/persona, importação de Character Card JSON e texto, além de bookmarklet implementados.
+  - PNG ainda não é suportado; persistência cloud da persona também pendente.
+- [x] **Passo 4: Memória — The Vault e The Chronicle**
+  - Seleção de lore por tags/contexto, aplicação de `vault_updates` e compressão de mensagens antigas em crônica integradas ao app.
+- [x] **Passo 5: RPG Hardcore**
+  - Ficha de Dungeon World e resolução determinística PbtA (2d6 + atributo); não é um sistema d20/d100.
+- [~] **Passo 6: Firebase e sincronização**
+  - Auth anônima e operações Firestore para `airpg_profiles`/`airpg_chats`; gravação cloud já conectada.
+  - Pendente: restaurar dados cloud no app, completar estratégia de sincronização e adicionar Storage para avatares.
+
+## 💡 Ideias e decisões em acompanhamento
+
+- **Confirmado:** manter `IAgent.md` como guia compacto para agentes e log de cada mudança; este README é o roadmap e registro legível para pessoas.
+- Nenhuma outra ideia de produto está registrada. Novas propostas discutidas devem entrar aqui com estado **proposta**, **em discussão**, **aprovada** ou **descartada**; atualizar os passos afetados quando houver decisão ou correção.
