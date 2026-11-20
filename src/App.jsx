@@ -30,6 +30,8 @@ import {
   LogOut,
   Shield,
   Crown,
+  FastForward,
+  Lightbulb,
 } from 'lucide-react';
 import { useBYOK } from './hooks/useBYOK';
 import { useProfiles } from './hooks/useProfiles';
@@ -46,6 +48,7 @@ import { callLLM } from './services/llmService';
 import { buildSystemPrompt } from './engine/promptBuilder';
 import { parseAssistantResponse } from './engine/stateParser';
 import { fishRelevantLore, fishRelevantCodex } from './engine/vaultFisher';
+import { generateContinuationChunk, generateUserReplySuggestion } from './engine/chatAssist';
 import { compressMessagesIntoChronicle } from './engine/chronicleCompressor';
 import {
   subscribeToAuth,
@@ -150,6 +153,7 @@ export default function App() {
 
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState('saved');
   const [errorMessage, setErrorMessage] = useState('');
@@ -625,6 +629,130 @@ export default function App() {
     persistSessionState(trimmedHistory, currentVault, currentChronicle, false);
 
     await generateAssistantTurn(trimmedHistory);
+  };
+
+  const handleContinueScene = async () => {
+    if (isLoading || isSuggesting) return;
+    if (!primaryByokConfig.isReady) {
+      setIsBYOKOpen(true);
+      return;
+    }
+
+    setErrorMessage('');
+    setIsLoading(true);
+    setEditingMsgIdx(null);
+
+    try {
+      const recentContextText = currentMessages
+        .slice(-4)
+        .map((m) => m.content)
+        .join(' ');
+
+      const activeBoxes = fishRelevantLore(currentVault, recentContextText, 8);
+      const fishedCodex = fishRelevantCodex(
+        codex,
+        recentContextText,
+        currentPinnedIds,
+        15
+      );
+
+      setActiveFishedTags(activeBoxes.map((b) => b.tag));
+      setActiveCodexItems(fishedCodex);
+
+      const lastUserMessage =
+        [...currentMessages].reverse().find((m) => m.role === 'user')?.content || '';
+
+      const systemPrompt = buildSystemPrompt({
+        entityType: activeProfile.type || 'chat',
+        characterName: activeProfile.name,
+        personality: activeProfile.personality,
+        scenario: activeProfile.scenario,
+        vaultContext: activeBoxes,
+        codexContext: fishedCodex,
+        chronicle: currentChronicle,
+        userPersona,
+        characterSheet: isRpgSession ? sheet : null,
+        godMode,
+        firstMessage: activeProfile.firstMessage || currentMessages[0]?.content || '',
+        lastUserMessage,
+      });
+
+      const rawContinuation = await generateContinuationChunk({
+        messages: currentMessages,
+        systemPrompt,
+        byokConfig: primaryByokConfig,
+      });
+      const { cleanText, stateUpdate } = parseAssistantResponse(rawContinuation);
+
+      let finalMessages;
+      if (currentMessages[currentMessages.length - 1]?.role === 'assistant') {
+        finalMessages = currentMessages.map((message, idx) =>
+          idx === currentMessages.length - 1
+            ? { ...message, content: `${message.content}\n\n${cleanText.trim()}` }
+            : message
+        );
+      } else {
+        finalMessages = [
+          ...currentMessages,
+          { role: 'assistant', content: cleanText.trim() },
+        ];
+      }
+
+      let nextVault = currentVault;
+      if (stateUpdate?.vault_updates && Array.isArray(stateUpdate.vault_updates)) {
+        nextVault = [...currentVault];
+        stateUpdate.vault_updates.forEach((update) => {
+          const idx = nextVault.findIndex(
+            (b) => b.tag.toLowerCase() === update.tag?.toLowerCase()
+          );
+          if (idx >= 0) {
+            nextVault[idx] = update;
+          } else if (update.tag && update.content) {
+            nextVault.push(update);
+          }
+        });
+      }
+
+      await persistSessionState(
+        finalMessages,
+        nextVault,
+        currentChronicle,
+        true
+      );
+    } catch (err) {
+      console.error('Erro ao continuar a cena:', err);
+      setErrorMessage(err.message || 'Erro inesperado ao continuar a cena.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSuggestUserReply = async () => {
+    if (isLoading || isSuggesting) return;
+    if (!primaryByokConfig.isReady) {
+      setIsBYOKOpen(true);
+      return;
+    }
+
+    setErrorMessage('');
+    setIsSuggesting(true);
+
+    try {
+      const suggestion = await generateUserReplySuggestion({
+        messages: currentMessages,
+        userPersona,
+        characterName: activeProfile.name,
+        scenario: activeProfile.scenario || activeProfile.personality,
+        byokConfig: primaryByokConfig,
+      });
+      const cleaned = suggestion.replace(/^["'“]|["'”]$/g, '').trim();
+      setInputMessage(cleaned);
+    } catch (err) {
+      console.error('Erro ao sugerir resposta:', err);
+      setErrorMessage(err.message || 'Erro inesperado ao sugerir uma resposta.');
+    } finally {
+      setIsSuggesting(false);
+    }
   };
 
   const handleSend = (e) => {
@@ -1207,6 +1335,20 @@ export default function App() {
                         {msg.content}
                       </div>
                     )}
+                    {!isEditingThis &&
+                      !isLoading &&
+                      idx === currentMessages.length - 1 &&
+                      msg.role === 'assistant' && (
+                        <button
+                          type="button"
+                          onClick={handleContinueScene}
+                          disabled={isSuggesting}
+                          className="mt-1 flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold text-zinc-400 hover:text-amber-300 border border-zinc-800 hover:border-amber-500/40 rounded-lg transition disabled:opacity-50"
+                        >
+                          <FastForward className="w-3 h-3" />
+                          <span>Continuar cena</span>
+                        </button>
+                      )}
                   </div>
                 </div>
               );
@@ -1307,7 +1449,7 @@ export default function App() {
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isLoading || isSuggesting}
                   placeholder={
                     isLoading
                       ? 'Aguardando resposta...'
@@ -1315,11 +1457,24 @@ export default function App() {
                       ? `Fale ou aja como ${userPersona.name}...`
                       : 'Descreva sua ação ou toque no dado 🎲...'
                   }
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 pr-12 transition shadow-inner disabled:opacity-50"
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 pr-20 transition shadow-inner disabled:opacity-50"
                 />
                 <button
+                  type="button"
+                  onClick={handleSuggestUserReply}
+                  disabled={isLoading || isSuggesting}
+                  className="absolute right-9 p-2 text-zinc-400 hover:text-amber-300 rounded-lg transition disabled:opacity-50"
+                  title="Sugerir resposta do jogador"
+                >
+                  {isSuggesting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Lightbulb className="w-4 h-4" />
+                  )}
+                </button>
+                <button
                   type="submit"
-                  disabled={!inputMessage.trim() || isLoading}
+                  disabled={!inputMessage.trim() || isLoading || isSuggesting}
                   className="absolute right-1.5 p-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-lg transition disabled:opacity-50"
                 >
                   {isLoading ? (
