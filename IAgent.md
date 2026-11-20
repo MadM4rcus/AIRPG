@@ -23,11 +23,19 @@ AIRPG é um app React/Vite de roleplay com BYOK, memória Vault/Chronicle, perfi
 - `package-lock.json` fixa a árvore de dependências npm. Não editar manualmente; use npm ao mudar dependências.
 - Scripts: `npm run dev` inicia Vite; `npm run build` compila; `npm run preview` serve o build. Não há scripts de teste/lint.
 
+## Infraestrutura & Deploy (Produção)
+- **URL Oficial:** `https://madrpg.web.app`
+- **Projeto Firebase:** `mad-pjct` (site Hosting: `madrpg`; diretório público: `dist`)
+- **Banco de Dados & Auth:** Firebase Anonymous Auth e Firestore com coleções isoladas `airpg_profiles` e `airpg_chats` protegidas por `request.auth.uid`.
+- **Comando de publicação:** `npm run build && firebase deploy --only hosting`
+
 ## Inventário retrospectivo dos arquivos
 Estado/função atual inspecionados em 2026-11-20. Isto é um mapa do conteúdo, não um histórico cronológico de cada edição; não invente autoria ou mudanças passadas.
 
 ### Raiz
 - `.gitignore` — exclui dependências/build, arquivos locais de ambiente e notas pessoais (`zzznotes*`).
+- `firebase.json` — configuração do Firebase Hosting apontando para o site `madrpg` e pasta `dist` (SPA rewrite para `/index.html`).
+- `.firebaserc` — vínculo do diretório com o projeto Firebase `mad-pjct`.
 - `package.json` — metadados, dependências e comandos npm.
 - `package-lock.json` — versões resolvidas das dependências npm.
 - `vite.config.js` — plugins React e Tailwind para Vite.
@@ -35,7 +43,7 @@ Estado/função atual inspecionados em 2026-11-20. Isto é um mapa do conteúdo,
 - `README.md` — apresentação humana, manifesto, estado do roadmap e ideias/decisões.
 - `IAgent.md` — este guia, inventário do código e log conciso para agentes.
 - `GEMINI.md` — removido na cópia de trabalho atual; conteúdo não inspecionado. Não restaurar sem pedido.
-- `.env` — configuração local do Firebase; ignorada pelo Git. Nunca registrar valores.
+- `.env` — configuração local do Firebase (`mad-pjct`); ignorada pelo Git. Nunca registrar valores.
 
 ### Aplicação e estilos (`src/`)
 - `main.jsx` — cria a raiz React, importa o CSS e monta `App`.
@@ -64,7 +72,7 @@ Estado/função atual inspecionados em 2026-11-20. Isto é um mapa do conteúdo,
 - `hooks/useCharacterSheet.js` — ficha Dungeon World, regras de atributos e persistência local.
 - `hooks/useProfiles.js` — perfis e persona padrão, CRUD, persistência local e gravação cloud de novos perfis.
 - `services/llmService.js` — chamadas HTTP para OpenRouter, Groq e Gemini.
-- `services/firebase.js` — configuração Firebase via variáveis de ambiente, Auth anônima e operações Firestore `airpg_profiles`/`airpg_chats`; não implica restauração completa nem Storage.
+- `services/firebase.js` — configuração Firebase via variáveis de ambiente, Auth anônima e operações Firestore `airpg_profiles`/`airpg_chats`; gravação cloud ativa, restauração completa pendente.
 
 `node_modules/` e `dist/` são artefatos/dependências gerados, ignorados e fora do inventário-fonte. Não inspecione nem documente arquivos pessoais ignorados.
 
@@ -79,4 +87,5 @@ Estado/função atual inspecionados em 2026-11-20. Isto é um mapa do conteúdo,
 - 2026-11-20 | docs | `IAgent.md`, `README.md` | Criado protocolo de rastreio e alinhado roadmap à implementação encontrada | revisão documental; sem build
 - 2026-11-20 | inventário | arquivos da raiz e `src/` | Mapeadas responsabilidades atuais, dependências e scripts; registrada a proteção de `zzznotes*` | conferido com código e `package.json`
 - 2026-11-20 | instruções | `IAgent.md` | Definida exceção segura para edições explicitamente solicitadas em notas pessoais | regra de privacidade revisada
-- 2026-11-20 | fix | `src/App.jsx`, `src/hooks/useProfiles.js`, `src/engine/promptBuilder.js`, `src/components/WorldArchitectChat.jsx`, `src/components/DungeonPaperModal.jsx`, `IAgent.md` | Aplicado buffer de 10 turnos, suporte a avatar URL, status real de sync Firebase, gravação cloud de novos perfis, validação de JSON na ficha, limpeza de crases no blueprint e remoção de `diceEngine.js` | pendente rodar `npm run build` localmente
+- 2026-11-20 | fix | `src/App.jsx`, `src/hooks/useProfiles.js`, `src/engine/promptBuilder.js`, `src/components/WorldArchitectChat.jsx`, `src/components/DungeonPaperModal.jsx`, `IAgent.md` | Aplicado buffer de 10 turnos, suporte a avatar URL, status real de sync Firebase, gravação cloud de novos perfis, validação de JSON na ficha, limpeza de crases no blueprint e remoção de `diceEngine.js` | build validado com `npm run build`
+- 2026-11-20 | deploy | `firebase.json`, `.firebaserc`, `IAgent.md`, `README.md` | Configurado projeto Firebase `mad-pjct` (Auth Anônima + Firestore `airpg_profiles`/`airpg_chats`) e publicado no Firebase Hosting em `https://madrpg.web.app` | build e deploy concluídos no terminal

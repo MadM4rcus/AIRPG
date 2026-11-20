@@ -2,6 +2,8 @@
 
 Plataforma pessoal e colaborativa para roleplay imersivo e simulação de RPG de mesa autônomo. Combina a liberdade narrativa de chats baseados em perfis/personas (estilo SpicyChat / Freeroam) com um motor determinístico de tolerância zero para campanhas RPG hardcore, sustentado por **Memória Híbrida em 3 Camadas** e **Multi-Provider BYOK** (foco em modelos gratuitos/baratos).
 
+- **App em Produção:** [https://madrpg.web.app](https://madrpg.web.app)
+
 ---
 
 ## 📜 Manifesto Técnico
@@ -31,14 +33,15 @@ Plataforma pessoal e colaborativa para roleplay imersivo e simulação de RPG de
 ## 🛠️ Stack & Infraestrutura
 
 - **Frontend:** React + Vite (JavaScript/JSX) + Tailwind CSS
+- **Hospedagem:** Firebase Hosting (`https://madrpg.web.app`, projeto `mad-pjct`, site `madrpg`).
 - **Persistência local:** `localStorage` para configurações BYOK, perfis, persona, ficha e dados de conversa/memória.
-- **Firebase:** autenticação anônima e Firestore com coleções `airpg_profiles` e `airpg_chats`; há gravação cloud, mas resta integrar a restauração/sincronização completa. Personas ficam locais; Firebase Storage para avatares ainda não está implementado.
+- **Firebase:** autenticação anônima e Firestore com coleções isoladas `airpg_profiles` e `airpg_chats`; gravação cloud ativa, restando integrar a restauração/sincronização completa entre dispositivos. Personas ficam locais; Firebase Storage para avatares ainda não está implementado.
 
 ---
 
 ## 🗺️ Roadmap Vertical (Do Zero ao MVP Jogável)
 
-Legenda: **[x] implementado no código** · **[~] parcial** · **[ ] pendente**. Situação por inspeção do repositório em 2026-11-20; não representa validação ponta a ponta.
+Legenda: **[x] implementado no código** · **[~] parcial** · **[ ] pendente**.
 
 - [x] **Passo 1: Fundação, BYOK e interface**
   - App Vite/React, configuração de modelos/chaves no `localStorage` e interface com perfis, chat e painéis contextuais.
@@ -52,10 +55,11 @@ Legenda: **[x] implementado no código** · **[~] parcial** · **[ ] pendente**.
 - [x] **Passo 5: RPG Hardcore**
   - Ficha de Dungeon World e resolução determinística PbtA (2d6 + atributo); não é um sistema d20/d100.
 - [~] **Passo 6: Firebase e sincronização**
-  - Auth anônima e operações Firestore para `airpg_profiles`/`airpg_chats`; gravação cloud já conectada.
-  - Pendente: restaurar dados cloud no app, completar estratégia de sincronização e adicionar Storage para avatares.
+  - Projeto `mad-pjct` configurado, Auth anônima ativa, regras Firestore publicadas (`airpg_profiles`/`airpg_chats`), gravação cloud conectada e app publicado em `https://madrpg.web.app`.
+  - Pendente: restaurar dados cloud automaticamente no app, completar estratégia de sincronização entre dispositivos e adicionar Storage para avatares.
 
 ## 💡 Ideias e decisões em acompanhamento
 
 - **Confirmado:** manter `IAgent.md` como guia compacto para agentes e log de cada mudança; este README é o roadmap e registro legível para pessoas.
-- Nenhuma outra ideia de produto está registrada. Novas propostas discutidas devem entrar aqui com estado **proposta**, **em discussão**, **aprovada** ou **descartada**; atualizar os passos afetados quando houver decisão ou correção.
+- **Confirmado:** publicar o app sob o domínio `https://madrpg.web.app` (site `madrpg` dentro do projeto `mad-pjct`) com coleções isoladas no Firestore.
+- Novas propostas discutidas devem entrar aqui com estado **proposta**, **em discussão**, **aprovada** ou **descartada**; atualizar os passos afetados quando houver decisão ou correção.
