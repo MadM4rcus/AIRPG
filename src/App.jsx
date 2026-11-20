@@ -12,7 +12,6 @@ import {
   Loader2,
   AlertCircle,
   Trash2,
-  User,
   ArrowLeft,
   MessageSquare,
   Search,
@@ -318,50 +317,42 @@ export default function App() {
     }
   };
 
-  const triggerCloudSync = async (msgs, vault, chronicle) => {
-    if (!uid) return;
-    setCloudSyncStatus('syncing');
-    const ok = await saveChatSessionToCloud(
-      uid,
-      activeProfile.id,
-      msgs,
-      vault,
-      chronicle
-    );
-    setCloudSyncStatus(ok ? 'saved' : 'error');
-  };
-
-  const updateCurrentMessages = (newMsgs) => {
+  // Grava toda a sessão (mensagens + vault + crônica) em 1 única escrita no Firestore
+  const persistSessionState = async (
+    newMsgs,
+    newVault = currentVault,
+    newChronicle = currentChronicle,
+    syncToCloud = true
+  ) => {
     setChatHistories((prev) => {
       const updated = { ...prev, [activeProfile.id]: newMsgs };
-      try {
-        localStorage.setItem(chatKey, JSON.stringify(updated));
-      } catch (e) {}
+      try { localStorage.setItem(chatKey, JSON.stringify(updated)); } catch (e) {}
       return updated;
     });
-    triggerCloudSync(newMsgs, currentVault, currentChronicle);
-  };
 
-  const updateCurrentVault = (newVault) => {
     setVaults((prev) => {
       const updated = { ...prev, [activeProfile.id]: newVault };
-      try {
-        localStorage.setItem(vaultKey, JSON.stringify(updated));
-      } catch (e) {}
+      try { localStorage.setItem(vaultKey, JSON.stringify(updated)); } catch (e) {}
       return updated;
     });
-    triggerCloudSync(currentMessages, newVault, currentChronicle);
-  };
 
-  const updateCurrentChronicle = (newChronicle) => {
     setChronicles((prev) => {
       const updated = { ...prev, [activeProfile.id]: newChronicle };
-      try {
-        localStorage.setItem(chronicleKey, JSON.stringify(updated));
-      } catch (e) {}
+      try { localStorage.setItem(chronicleKey, JSON.stringify(updated)); } catch (e) {}
       return updated;
     });
-    triggerCloudSync(currentMessages, currentVault, newChronicle);
+
+    if (syncToCloud && uid) {
+      setCloudSyncStatus('syncing');
+      const ok = await saveChatSessionToCloud(
+        uid,
+        activeProfile.id,
+        newMsgs,
+        newVault,
+        newChronicle
+      );
+      setCloudSyncStatus(ok ? 'saved' : 'error');
+    }
   };
 
   const handleOpenChat = (profileId) => {
@@ -391,7 +382,7 @@ export default function App() {
       { tag: formattedTag, content: newVaultContent.trim() },
       ...currentVault,
     ];
-    updateCurrentVault(nextVault);
+    persistSessionState(currentMessages, nextVault, currentChronicle, true);
     setNewVaultTag('');
     setNewVaultContent('');
     setIsAddingVaultBox(false);
@@ -399,33 +390,34 @@ export default function App() {
 
   const handleDeleteVaultBox = (tagToDelete) => {
     const nextVault = currentVault.filter((b) => b.tag !== tagToDelete);
-    updateCurrentVault(nextVault);
+    persistSessionState(currentMessages, nextVault, currentChronicle, true);
   };
 
-  const runChronicleCompression = async (msgsSnapshot, silent = false) => {
-    if (msgsSnapshot.length <= 8 || isCompressing) return msgsSnapshot;
+  const runChronicleCompression = async (
+    msgsSnapshot,
+    vaultSnapshot = currentVault,
+    chronicleSnapshot = currentChronicle,
+    silent = false
+  ) => {
+    if (msgsSnapshot.length <= 8 || isCompressing) return;
     setIsCompressing(true);
 
     try {
-      // Compacta os turnos mais antigos mantendo a abertura + os 6 turnos mais recentes
       const turnsToCompress = msgsSnapshot.slice(1, -6);
       const remainingMessages = [msgsSnapshot[0], ...msgsSnapshot.slice(-6)];
 
       const newChronicle = await compressMessagesIntoChronicle({
         oldMessages: turnsToCompress,
-        existingChronicle: currentChronicle,
+        existingChronicle: chronicleSnapshot,
         byokConfig: chronicleByokConfig,
       });
 
-      updateCurrentChronicle(newChronicle);
-      updateCurrentMessages(remainingMessages);
+      await persistSessionState(remainingMessages, vaultSnapshot, newChronicle, true);
       if (!silent) {
         alert('The Chronicle atualizado! Turnos antigos sintetizados.');
       }
-      return remainingMessages;
     } catch (err) {
       console.warn('Erro ao comprimir Chronicle:', err);
-      return msgsSnapshot;
     } finally {
       setIsCompressing(false);
     }
@@ -443,15 +435,15 @@ export default function App() {
     const userText = textToSend.trim();
     setInputMessage('');
 
+    // Atualiza UI e localStorage imediatamente sem gastar gravação extra no Firestore ainda
     const updatedMessages = [
       ...currentMessages,
       { role: 'user', content: userText },
     ];
-    updateCurrentMessages(updatedMessages);
+    persistSessionState(updatedMessages, currentVault, currentChronicle, false);
     setIsLoading(true);
 
     try {
-      // Junta texto recente para o Pescador RAG encontrar NPCs, Locais e Regras citados
       const recentContextText = updatedMessages
         .slice(-4)
         .map((m) => m.content)
@@ -481,7 +473,6 @@ export default function App() {
         godMode,
       });
 
-      // Buffer econômico: últimos 8 turnos
       const recentBuffer = updatedMessages.slice(-8);
 
       const messagesForLLM = mechanicalInjection
@@ -502,10 +493,10 @@ export default function App() {
         ...updatedMessages,
         { role: 'assistant', content: cleanText },
       ];
-      updateCurrentMessages(finalMessages);
 
+      let nextVault = currentVault;
       if (stateUpdate?.vault_updates && Array.isArray(stateUpdate.vault_updates)) {
-        const nextVault = [...currentVault];
+        nextVault = [...currentVault];
         stateUpdate.vault_updates.forEach((update) => {
           const idx = nextVault.findIndex(
             (b) => b.tag.toLowerCase() === update.tag?.toLowerCase()
@@ -516,16 +507,21 @@ export default function App() {
             nextVault.push(update);
           }
         });
-        updateCurrentVault(nextVault);
       }
 
-      // Disparo automático do Cronista quando passa de 12 mensagens
+      // Se passou de 12 mensagens, o Cronista compacta e salva tudo em 1 única gravação;
+      // caso contrário, salva o turno completo agora em 1 única gravação.
       if (finalMessages.length > 12) {
-        runChronicleCompression(finalMessages, true);
+        persistSessionState(finalMessages, nextVault, currentChronicle, false);
+        runChronicleCompression(finalMessages, nextVault, currentChronicle, true);
+      } else {
+        await persistSessionState(finalMessages, nextVault, currentChronicle, true);
       }
     } catch (err) {
       console.error('Erro na chamada da LLM:', err);
       setErrorMessage(err.message || 'Erro inesperado ao se comunicar com a IA.');
+      // Salva ao menos a mensagem do usuário caso a IA falhe
+      await persistSessionState(updatedMessages, currentVault, currentChronicle, true);
     } finally {
       setIsLoading(false);
     }
@@ -889,7 +885,7 @@ export default function App() {
                 </button>
               )}
 
-              {/* Atalho Biblioteca de Personas para ciclar na hora */}
+              {/* Atalho Biblioteca de Personas */}
               <button
                 onClick={() => setIsPersonaOpen(true)}
                 className="p-1.5 px-2 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 hover:border-amber-500/40 flex items-center gap-1 transition"
@@ -1454,7 +1450,14 @@ export default function App() {
 
                 {currentMessages.length > 8 && (
                   <button
-                    onClick={() => runChronicleCompression(currentMessages, false)}
+                    onClick={() =>
+                      runChronicleCompression(
+                        currentMessages,
+                        currentVault,
+                        currentChronicle,
+                        false
+                      )
+                    }
                     disabled={isCompressing}
                     className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                   >
