@@ -23,6 +23,10 @@ import {
   Cloud,
   CloudOff,
   RotateCw,
+  RotateCcw,
+  RefreshCw,
+  Pencil,
+  Check,
   LogOut,
   Shield,
   Crown,
@@ -150,6 +154,10 @@ export default function App() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState('saved');
   const [errorMessage, setErrorMessage] = useState('');
 
+  // Estado de edição inline de mensagens
+  const [editingMsgIdx, setEditingMsgIdx] = useState(null);
+  const [editingMsgText, setEditingMsgText] = useState('');
+
   const [activeFishedTags, setActiveFishedTags] = useState([]);
   const [activeCodexItems, setActiveCodexItems] = useState([]);
   const [pinnedByEntity, setPinnedByEntity] = useState({});
@@ -254,6 +262,7 @@ export default function App() {
     provider: settings.provider,
     apiKey: settings.apiKey,
     model: activeModel,
+    customEndpointUrl: settings.customEndpointUrl,
     temperature: settings.temperature ?? 0.85,
     isReady: isConfigured,
   };
@@ -270,14 +279,14 @@ export default function App() {
       : primaryByokConfig;
 
   useEffect(() => {
-    if (currentScreen === 'chat' && user) {
+    if (currentScreen === 'chat' && user && editingMsgIdx === null) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [chatHistories, isLoading, currentScreen, user]);
+  }, [chatHistories, isLoading, currentScreen, user, editingMsgIdx]);
 
   if (authLoading) {
     return (
-      <div className="min-h-screen w-full bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center gap-3">
+      <div className="min-h-[100dvh] w-full bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center gap-3">
         <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
         <span className="text-xs text-zinc-400">Verificando sessão...</span>
       </div>
@@ -355,7 +364,63 @@ export default function App() {
     }
   };
 
+  // Apagar uma mensagem específica do histórico
+  const handleDeleteMessage = async (msgIndex) => {
+    if (msgIndex === 0) return;
+    if (editingMsgIdx === msgIndex) {
+      setEditingMsgIdx(null);
+      setEditingMsgText('');
+    }
+    const nextMsgs = currentMessages.filter((_, idx) => idx !== msgIndex);
+    setErrorMessage('');
+    await persistSessionState(nextMsgs, currentVault, currentChronicle, true);
+  };
+
+  // Iniciar edição de qualquer mensagem (usuário ou IA)
+  const handleStartEditMessage = (idx, content) => {
+    setEditingMsgIdx(idx);
+    setEditingMsgText(content);
+  };
+
+  const handleCancelEditMessage = () => {
+    setEditingMsgIdx(null);
+    setEditingMsgText('');
+  };
+
+  const handleSaveEditMessage = async (idx) => {
+    const trimmed = editingMsgText.trim();
+    if (!trimmed) return;
+    const nextMsgs = currentMessages.map((m, i) =>
+      i === idx ? { ...m, content: trimmed } : m
+    );
+    setEditingMsgIdx(null);
+    setEditingMsgText('');
+    setErrorMessage('');
+    await persistSessionState(nextMsgs, currentVault, currentChronicle, true);
+  };
+
+  // Limpar chat / Iniciar nova conversa do zero com o mesmo bot/campanha
+  const handleResetChat = async () => {
+    const confirmed = confirm(
+      `Iniciar uma NOVA CONVERSA com "${activeProfile.name}"?\n\nIsso apagará as mensagens atuais, zerará a Crônica e restaurará o Vault inicial.`
+    );
+    if (!confirmed) return;
+
+    const freshMessages = [
+      { role: 'assistant', content: activeProfile.firstMessage },
+    ];
+    const freshVault = activeProfile.initialVault || [];
+
+    setEditingMsgIdx(null);
+    setErrorMessage('');
+    setActiveFishedTags([]);
+    setActiveCodexItems([]);
+    await persistSessionState(freshMessages, freshVault, '', true);
+  };
+
   const handleOpenChat = (profileId) => {
+    setErrorMessage('');
+    setEditingMsgIdx(null);
     setActiveProfileId(profileId);
     setRightDrawerTab('vault');
     setCurrentScreen('chat');
@@ -423,28 +488,21 @@ export default function App() {
     }
   };
 
-  const executeSendMessage = async (textToSend, mechanicalInjection = '') => {
-    if (!textToSend.trim() || isLoading) return;
-
+  // Núcleo compartilhado de chamada à LLM a partir de um array de mensagens
+  const generateAssistantTurn = async (
+    baseMessages,
+    mechanicalInjection = ''
+  ) => {
     if (!primaryByokConfig.isReady) {
       setIsBYOKOpen(true);
       return;
     }
 
     setErrorMessage('');
-    const userText = textToSend.trim();
-    setInputMessage('');
-
-    // Atualiza UI e localStorage imediatamente sem gastar gravação extra no Firestore ainda
-    const updatedMessages = [
-      ...currentMessages,
-      { role: 'user', content: userText },
-    ];
-    persistSessionState(updatedMessages, currentVault, currentChronicle, false);
     setIsLoading(true);
 
     try {
-      const recentContextText = updatedMessages
+      const recentContextText = baseMessages
         .slice(-4)
         .map((m) => m.content)
         .join(' ');
@@ -460,6 +518,9 @@ export default function App() {
       setActiveFishedTags(activeBoxes.map((b) => b.tag));
       setActiveCodexItems(fishedCodex);
 
+      const lastUserMsg =
+        [...baseMessages].reverse().find((m) => m.role === 'user')?.content || '';
+
       const systemPrompt = buildSystemPrompt({
         entityType: activeProfile.type || 'chat',
         characterName: activeProfile.name,
@@ -471,16 +532,24 @@ export default function App() {
         userPersona: userPersona,
         characterSheet: isRpgSession ? sheet : null,
         godMode,
+        firstMessage: activeProfile.firstMessage || baseMessages[0]?.content || '',
+        lastUserMessage: lastUserMsg,
       });
 
-      const recentBuffer = updatedMessages.slice(-8);
+      const recentBuffer = baseMessages.slice(-8);
 
-      const messagesForLLM = mechanicalInjection
-        ? [
-            ...recentBuffer.slice(0, -1),
-            { role: 'user', content: `${userText}\n\n${mechanicalInjection}` },
-          ]
-        : recentBuffer;
+      const messagesForLLM =
+        mechanicalInjection && recentBuffer.length > 0
+          ? [
+              ...recentBuffer.slice(0, -1),
+              {
+                role: recentBuffer[recentBuffer.length - 1].role,
+                content: `${
+                  recentBuffer[recentBuffer.length - 1].content
+                }\n\n${mechanicalInjection}`,
+              },
+            ]
+          : recentBuffer;
 
       const rawResponse = await callLLM({
         messages: messagesForLLM,
@@ -490,7 +559,7 @@ export default function App() {
 
       const { cleanText, stateUpdate } = parseAssistantResponse(rawResponse);
       const finalMessages = [
-        ...updatedMessages,
+        ...baseMessages,
         { role: 'assistant', content: cleanText },
       ];
 
@@ -509,8 +578,6 @@ export default function App() {
         });
       }
 
-      // Se passou de 12 mensagens, o Cronista compacta e salva tudo em 1 única gravação;
-      // caso contrário, salva o turno completo agora em 1 única gravação.
       if (finalMessages.length > 12) {
         persistSessionState(finalMessages, nextVault, currentChronicle, false);
         runChronicleCompression(finalMessages, nextVault, currentChronicle, true);
@@ -520,11 +587,44 @@ export default function App() {
     } catch (err) {
       console.error('Erro na chamada da LLM:', err);
       setErrorMessage(err.message || 'Erro inesperado ao se comunicar com a IA.');
-      // Salva ao menos a mensagem do usuário caso a IA falhe
-      await persistSessionState(updatedMessages, currentVault, currentChronicle, true);
+      await persistSessionState(baseMessages, currentVault, currentChronicle, true);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const executeSendMessage = async (textToSend, mechanicalInjection = '') => {
+    if (!textToSend.trim() || isLoading) return;
+
+    if (!primaryByokConfig.isReady) {
+      setIsBYOKOpen(true);
+      return;
+    }
+
+    const userText = textToSend.trim();
+    setInputMessage('');
+    setEditingMsgIdx(null);
+
+    const updatedMessages = [
+      ...currentMessages,
+      { role: 'user', content: userText },
+    ];
+    persistSessionState(updatedMessages, currentVault, currentChronicle, false);
+
+    await generateAssistantTurn(updatedMessages, mechanicalInjection);
+  };
+
+  // Regenerar / Tentar de novo apenas a última resposta da IA
+  const handleRegenerateLastResponse = async () => {
+    if (isLoading || currentMessages.length <= 1) return;
+    const lastMsg = currentMessages[currentMessages.length - 1];
+    if (lastMsg.role !== 'assistant') return;
+
+    setEditingMsgIdx(null);
+    const trimmedHistory = currentMessages.slice(0, -1);
+    persistSessionState(trimmedHistory, currentVault, currentChronicle, false);
+
+    await generateAssistantTurn(trimmedHistory);
   };
 
   const handleSend = (e) => {
@@ -547,13 +647,13 @@ export default function App() {
   );
 
   return (
-    <div className="flex h-screen w-full bg-zinc-950 text-zinc-100 font-sans overflow-hidden select-none">
+    <div className="fixed inset-0 flex h-[100dvh] w-full bg-zinc-950 text-zinc-100 font-sans overflow-hidden select-none">
       {/* ============================================================== */}
       {/* TELA 1: FEED / DOIS MUNDOS SEPARADOS + BIBLIOTECA              */}
       {/* ============================================================== */}
       {currentScreen === 'feed' && (
         <div className="flex-1 flex flex-col h-full w-full bg-zinc-950 overflow-y-auto">
-          <header className="h-14 border-b border-zinc-800/80 px-4 flex items-center justify-between bg-zinc-950/80 backdrop-blur-md sticky top-0 z-20 shrink-0">
+          <header className="h-14 border-b border-zinc-800/80 px-4 flex items-center justify-between bg-zinc-950/90 backdrop-blur-md sticky top-0 z-20 shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-xs">
                 AI
@@ -618,7 +718,7 @@ export default function App() {
             </div>
           </header>
 
-          <main className="p-4 space-y-5 max-w-3xl mx-auto w-full pb-10">
+          <main className="p-4 space-y-5 max-w-3xl mx-auto w-full pb-12">
             {!primaryByokConfig.isReady && (
               <div className="bg-amber-950/40 border border-amber-600/50 rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-lg">
                 <div className="flex items-center gap-2.5">
@@ -828,33 +928,33 @@ export default function App() {
       )}
 
       {/* ============================================================== */}
-      {/* TELA 2: CHAT ATIVO (INTERFACE ADAPTADA POR MODO + GOD MODE)    */}
+      {/* TELA 2: CHAT ATIVO (EDITAR, REGENERAR ÚLTIMA, APAGAR, RESET)   */}
       {/* ============================================================== */}
       {currentScreen === 'chat' && (
-        <main className="flex-1 flex flex-col h-full w-full bg-zinc-950 relative">
-          <header className="h-14 border-b border-zinc-800 px-3 flex items-center justify-between bg-zinc-950/90 backdrop-blur-md shrink-0">
-            <div className="flex items-center gap-2 truncate pr-2">
+        <main className="flex-1 flex flex-col h-full w-full bg-zinc-950 relative overflow-hidden">
+          <header className="sticky top-0 z-20 h-14 border-b border-zinc-800 px-2 sm:px-3 flex items-center justify-between bg-zinc-950/95 backdrop-blur-md shrink-0">
+            <div className="flex items-center gap-1.5 min-w-0 pr-1">
               <button
                 onClick={() => setCurrentScreen('feed')}
-                className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+                className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 shrink-0"
                 title="Voltar ao início"
               >
                 <ArrowLeft className="w-5 h-5 text-amber-400" />
               </button>
-              <div className="flex items-center gap-2 truncate">
+              <div className="flex items-center gap-2 min-w-0">
                 <div className="w-7 h-7 shrink-0 flex items-center justify-center overflow-hidden rounded-lg">
                   <AvatarDisplay
                     avatar={activeProfile.avatar}
                     className="text-lg"
                   />
                 </div>
-                <div className="truncate">
+                <div className="min-w-0">
                   <h2 className="font-bold text-xs text-zinc-100 truncate">
                     {activeProfile.name}
                   </h2>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1">
                     <span
-                      className={`w-1.5 h-1.5 rounded-full ${
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         isLoading ? 'bg-amber-400 animate-ping' : 'bg-emerald-500'
                       }`}
                     />
@@ -862,20 +962,20 @@ export default function App() {
                       {isLoading
                         ? 'pensando...'
                         : isRpgSession
-                        ? `${sheet.className} • Campanha PbtA`
-                        : 'Freeroam Narrativo'}
+                        ? `${sheet.className} • PbtA`
+                        : 'Freeroam'}
                     </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               {/* PV apenas em Campanhas RPG */}
               {isRpgSession && (
                 <button
                   onClick={() => setIsDungeonPaperOpen(true)}
-                  className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/80 rounded-lg text-rose-300 text-[11px] font-bold flex items-center gap-1 transition"
+                  className="px-1.5 sm:px-2 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/80 rounded-lg text-rose-300 text-[11px] font-bold flex items-center gap-1 transition"
                   title="Abrir Ficha Dungeon Paper"
                 >
                   <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
@@ -900,7 +1000,7 @@ export default function App() {
               {/* Interruptor Realista (Padrão) vs Modo Deus */}
               <button
                 onClick={() => setGodMode((prev) => !prev)}
-                className={`p-1.5 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1 transition ${
+                className={`p-1.5 px-2 rounded-lg border text-[11px] font-semibold flex items-center gap-1 transition ${
                   godMode
                     ? 'bg-purple-950/60 border-purple-600/70 text-purple-300'
                     : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-zinc-600'
@@ -924,10 +1024,20 @@ export default function App() {
                 )}
               </button>
 
+              {/* Nova Conversa / Reiniciar Chat */}
+              <button
+                onClick={handleResetChat}
+                disabled={isLoading || currentMessages.length <= 1}
+                className="p-1.5 sm:p-2 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 disabled:opacity-30 transition"
+                title="Nova conversa / Reiniciar chat do zero"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+
               {/* Atalho Biblioteca (Codex) */}
               <button
                 onClick={() => setIsCodexOpen(true)}
-                className="p-2 rounded-lg text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
+                className="p-1.5 sm:p-2 rounded-lg text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
                 title="Abrir Biblioteca de NPCs, Locais e Regras"
               >
                 <BookOpen className="w-4 h-4" />
@@ -936,7 +1046,7 @@ export default function App() {
               {/* Gaveta Vault / Crônica (e Ficha se for RPG) */}
               <button
                 onClick={() => setRightDrawerOpen(true)}
-                className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 relative"
+                className="p-1.5 sm:p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 relative"
                 title="Abrir Memória (Vault & Crônica)"
               >
                 {isRpgSession ? (
@@ -951,7 +1061,7 @@ export default function App() {
 
               <button
                 onClick={() => setIsBYOKOpen(true)}
-                className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 relative"
+                className="p-1.5 sm:p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 relative"
                 title="Configurar chaves"
               >
                 <Settings className="w-4 h-4 text-zinc-300" />
@@ -962,24 +1072,8 @@ export default function App() {
             </div>
           </header>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {!primaryByokConfig.isReady && (
-              <div className="bg-amber-950/40 border border-amber-600/40 rounded-xl p-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 truncate">
-                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                  <p className="text-[11px] text-amber-200 truncate">
-                    Configurar chave de IA ({primaryByokConfig.provider.toUpperCase()})
-                  </p>
-                </div>
-                <button
-                  onClick={() => setIsBYOKOpen(true)}
-                  className="px-2.5 py-1 text-[11px] font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-md transition shrink-0"
-                >
-                  Chave
-                </button>
-              </div>
-            )}
-
+          {/* ÁREA DE MENSAGENS ROLÁVEL */}
+          <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
             {currentChronicle && (
               <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-3 flex items-start gap-2.5 text-xs text-zinc-400">
                 <ScrollText className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -994,61 +1088,129 @@ export default function App() {
               </div>
             )}
 
-            {errorMessage && (
-              <div className="bg-rose-950/40 border border-rose-600/50 rounded-xl p-3 flex items-start gap-2.5 text-xs text-rose-200">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <p className="font-semibold">Erro na chamada de IA:</p>
-                  <p className="text-rose-300/90 text-[11px]">{errorMessage}</p>
-                </div>
-              </div>
-            )}
+            {currentMessages.map((msg, idx) => {
+              const isEditingThis = editingMsgIdx === idx;
+              const isLastAssistantMsg =
+                idx === currentMessages.length - 1 &&
+                idx > 0 &&
+                msg.role === 'assistant';
 
-            {currentMessages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex items-start gap-3 ${
-                  msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
-                }`}
-              >
+              return (
                 <div
-                  className={`w-8 h-8 rounded-full border flex items-center justify-center text-sm shrink-0 overflow-hidden ${
-                    msg.role === 'user'
-                      ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                      : 'bg-zinc-800 border-zinc-700 text-base'
+                  key={idx}
+                  className={`group flex items-start gap-3 ${
+                    msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
                   }`}
                 >
-                  {msg.role === 'user' ? (
-                    <span>{userPersona.avatar || '🧑'}</span>
-                  ) : (
-                    <AvatarDisplay avatar={activeProfile.avatar} />
-                  )}
-                </div>
-
-                <div
-                  className={`space-y-1 max-w-[85%] ${
-                    msg.role === 'user' ? 'text-right' : 'text-left'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 px-1">
-                    <span className="font-semibold text-xs text-amber-400">
-                      {msg.role === 'user'
-                        ? userPersona.name
-                        : activeProfile.name.split(',')[0]}
-                    </span>
-                  </div>
                   <div
-                    className={`rounded-2xl p-3.5 text-xs leading-relaxed space-y-2 whitespace-pre-wrap ${
+                    className={`w-8 h-8 rounded-full border flex items-center justify-center text-sm shrink-0 overflow-hidden ${
                       msg.role === 'user'
-                        ? 'bg-amber-600/20 border border-amber-500/30 text-zinc-100 rounded-tr-none'
-                        : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none shadow-sm'
+                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                        : 'bg-zinc-800 border-zinc-700 text-base'
                     }`}
                   >
-                    {msg.content}
+                    {msg.role === 'user' ? (
+                      <span>{userPersona.avatar || '🧑'}</span>
+                    ) : (
+                      <AvatarDisplay avatar={activeProfile.avatar} />
+                    )}
+                  </div>
+
+                  <div
+                    className={`space-y-1 max-w-[85%] ${
+                      isEditingThis ? 'w-full' : ''
+                    } ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
+                  >
+                    <div
+                      className={`flex items-center gap-2 px-1 ${
+                        msg.role === 'user' ? 'justify-end' : 'justify-start'
+                      }`}
+                    >
+                      <span className="font-semibold text-xs text-amber-400">
+                        {msg.role === 'user'
+                          ? userPersona.name
+                          : activeProfile.name.split(',')[0]}
+                      </span>
+
+                      {!isLoading && !isEditingThis && (
+                        <div className="flex items-center gap-1">
+                          {/* Lápis para editar qualquer mensagem (usuário ou IA) */}
+                          <button
+                            onClick={() =>
+                              handleStartEditMessage(idx, msg.content)
+                            }
+                            className="opacity-50 hover:opacity-100 focus:opacity-100 p-0.5 text-zinc-400 hover:text-amber-400 transition"
+                            title="Editar mensagem"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+
+                          {/* Regenerar / Tentar de novo apenas na última mensagem da IA */}
+                          {isLastAssistantMsg && (
+                            <button
+                              onClick={handleRegenerateLastResponse}
+                              className="opacity-60 hover:opacity-100 focus:opacity-100 p-0.5 text-zinc-400 hover:text-emerald-400 transition"
+                              title="Atualizar resposta / Tentar de novo"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                            </button>
+                          )}
+
+                          {/* Lixeira para apagar mensagem */}
+                          {idx > 0 && (
+                            <button
+                              onClick={() => handleDeleteMessage(idx)}
+                              className="opacity-50 hover:opacity-100 focus:opacity-100 p-0.5 text-zinc-400 hover:text-rose-400 transition"
+                              title="Remover esta mensagem"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {isEditingThis ? (
+                      <div className="bg-zinc-900 border border-amber-500/60 rounded-2xl p-2.5 space-y-2 text-left shadow-lg">
+                        <textarea
+                          rows={4}
+                          value={editingMsgText}
+                          onChange={(e) => setEditingMsgText(e.target.value)}
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-xs text-zinc-100 leading-relaxed focus:outline-none focus:border-amber-500 resize-y"
+                        />
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleCancelEditMessage}
+                            className="px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEditMessage(idx)}
+                            className="flex items-center gap-1 px-3 py-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-[11px] rounded-lg transition"
+                          >
+                            <Check className="w-3 h-3" />
+                            <span>Salvar</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        className={`rounded-2xl p-3.5 text-xs leading-relaxed space-y-2 whitespace-pre-wrap select-text ${
+                          msg.role === 'user'
+                            ? 'bg-amber-600/20 border border-amber-500/30 text-zinc-100 rounded-tr-none'
+                            : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none shadow-sm'
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {isLoading && (
               <div className="flex items-start gap-3">
@@ -1069,6 +1231,60 @@ export default function App() {
             <div ref={messagesEndRef} />
           </div>
 
+          {/* BANNERS DE AVISO E ERRO FIXOS LOGO ACIMA DO INPUT */}
+          {(!primaryByokConfig.isReady || errorMessage) && (
+            <div className="px-3 pt-2 bg-zinc-950 border-t border-zinc-900 space-y-2 shrink-0">
+              {!primaryByokConfig.isReady && (
+                <div className="bg-amber-950/60 border border-amber-600/50 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 truncate">
+                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                    <p className="text-[11px] text-amber-200 truncate">
+                      Configure sua chave ({primaryByokConfig.provider.toUpperCase()})
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsBYOKOpen(true)}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-md transition shrink-0"
+                  >
+                    Chave
+                  </button>
+                </div>
+              )}
+
+              {errorMessage && (
+                <div className="bg-rose-950/80 border border-rose-600/60 rounded-xl p-2.5 flex items-start justify-between gap-2 text-xs text-rose-200">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="font-bold text-[11px] text-rose-300">
+                        Erro no modelo ({activeModel}):
+                      </p>
+                      <p className="text-rose-200/90 text-[11px] break-words">
+                        {errorMessage}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => setIsBYOKOpen(true)}
+                      className="px-2 py-1 text-[10px] font-bold bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 rounded-md"
+                    >
+                      Trocar
+                    </button>
+                    <button
+                      onClick={() => setErrorMessage('')}
+                      className="p-1 text-rose-400 hover:text-rose-200"
+                      title="Fechar aviso"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* RODAPÉ FIXO DE INPUT */}
           <div className="p-3 border-t border-zinc-800/80 bg-zinc-950 shrink-0">
             <form
               onSubmit={handleSend}
@@ -1322,7 +1538,7 @@ export default function App() {
                               )}
                               <button
                                 onClick={() => handleDeleteVaultBox(box.tag)}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 transition"
+                                className="opacity-40 hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 transition"
                                 title="Excluir do Vault"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -1488,6 +1704,17 @@ export default function App() {
                     </p>
                   )}
                 </div>
+
+                <button
+                  onClick={() => {
+                    setRightDrawerOpen(false);
+                    handleResetChat();
+                  }}
+                  className="w-full py-2 bg-rose-950/60 hover:bg-rose-900/70 border border-rose-800/60 text-rose-300 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Limpar Chat / Nova Conversa</span>
+                </button>
               </div>
             )}
           </div>
