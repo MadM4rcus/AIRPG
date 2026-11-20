@@ -1,6 +1,6 @@
-# AIRPG — Dual-Mode Character Chat & Hardcore RAG-RPG Engine
+# AIRPG — Two-World Character Chat & Hardcore PbtA Engine
 
-Plataforma pessoal e colaborativa para roleplay imersivo e simulação de RPG de mesa autônomo. Combina a liberdade narrativa de chats baseados em perfis/personas (estilo SpicyChat / Freeroam) com um motor determinístico de tolerância zero para campanhas RPG hardcore, sustentado por **Memória Híbrida em 3 Camadas** e **Multi-Provider BYOK** (foco em modelos gratuitos/baratos).
+Plataforma pessoal e colaborativa para roleplay imersivo e simulação de RPG de mesa autônomo. Separa completamente a experiência de **Conversa Livre com Personagens** (estilo SpicyChat / narrativa irrestrita com agência própria dos NPCs) da experiência de **Campanhas RPG Hardcore** (motor determinístico PbtA / Dungeon World onde os dados `2d6` são os juízes), sustentadas por **Memória Econômica em 3 Camadas**, **Multi-Provider BYOK** e **Login Google (Gmail)** isolado por usuário.
 
 - **App em Produção:** [https://madrpg.web.app](https://madrpg.web.app)
 
@@ -8,58 +8,58 @@ Plataforma pessoal e colaborativa para roleplay imersivo e simulação de RPG de
 
 ## 📜 Manifesto Técnico
 
-1. **Arquitetura Dual-Mode (Freeroam vs. Hardcore RPG):**
-   - **Modo Freeroam / Character Chat:** Foco total em diálogo, personalidade, cenário e dinâmica relacional. Sem rolagens de dado ou blocos numéricos visíveis; o motor de memória atua silenciosamente em segundo plano para manter consistência de fatos, roupas, segredos e estado emocional.
-   - **Modo RPG Hardcore (O Código é o Juiz):** Ativa ficha de personagem, escassez de recursos e resolução mecânica determinística no JavaScript (dados, atributos, CDs). A IA atua estritamente como narradora neutra e nunca suaviza falhas críticas.
-   - **Alternância Dinâmica:** Uma sessão pode iniciar em modo Freeroam e ativar o modo RPG a qualquer momento caso a narrativa exija combate, exploração ou sobrevivência.
+1. **Dois Mundos Completamente Separados (Sem Mistura de Modos):**
+   - **Personagens — Conversa Livre & Narrativa (`type: 'chat'`):** Biblioteca e coleção própria (`airpg_users/{uid}/characters`). Interface limpa, sem ficha de RPG, sem HP e sem rolagem de dados; gaveta lateral dedicada a **The Vault** e **The Chronicle**. Foco em diálogo, tensão dramática, romance/NSFW irrestrito e **vontade própria dos NPCs**.
+   - **Campanhas RPG — Mestre PbtA / Dungeon World (`type: 'rpg'`):** Biblioteca e coleção própria (`airpg_users/{uid}/campaigns`) com ficha Dungeon Paper vinculada. Barra superior com **HP**, acesso rápido à **Ficha** e botão de rolagem **`2d6` (Movimentos PbtA)**. O Mestre conduz o mundo com rigor e os dados decidem o desfecho.
 
-2. **Multi-Provider BYOK (Zero Custo / Tier Gratuito):**
-   - Suporte nativo a chaves trazidas pelo usuário (*Bring Your Own Key*) em provedores compatíveis com padrão OpenAI/REST: **OpenRouter** (modelos `:free` sem censura/roleplay), **Groq** (Llama/Mixtral ultra-rápido) e **Google AI Studio** (Gemini Flash/Pro gratuito).
-   - Configuração granular: cada Perfil/Bot pode ter um provedor e modelo preferido vinculado.
+2. **Interruptor "Modo Deus" (`God Mode` — Único Botão em Comum):**
+   - Combate o viés de bajulação (*sycophancy*) das IAs.
+   - **Realista (`godMode = false` — Padrão):** No RPG, os dados `2d6`, atributos, nível e equipamento são a lei — declarações impossíveis falham de forma verossímil. Nos Personagens, os NPCs mantêm personalidade, orgulho, limites e ritmo emocional próprios, exigindo conquista e coerência.
+   - **Modo Deus (`godMode = true`):** Libera fantasia de poder / sandbox livre onde as declarações do jogador são aceitas como verdade absoluta.
 
-3. **Memória Híbrida em 3 Camadas (RAG + Janela Deslizante):**
-   - **Tier A — The Chronicle (Macro-Linha do Tempo):** Resumos históricos comprimidos preservando a cronologia da história.
-   - **Tier B — The Vault (Caixas de Lore com Tags Dinâmicas):** Entidades estruturadas em JSON (NPCs, locais, regras do mundo, fatos relacionais) injetadas no prompt *apenas* quando palavras-chave são acionadas na cena. Verdade imutável.
-   - **Tier C — Active Buffer (Micro-Janela):** Os últimos 5 a 10 turnos brutos para fluidez imediata da conversa.
+3. **Autenticação Google & Multi-Provider BYOK (Zero Custo / Tier Gratuito):**
+   - Login obrigatório via **Google (Gmail)** antes do acesso à interface, isolando chaves, personas, personagens, campanhas, fichas e chats em `airpg_users/{uid}`.
+   - Suporte a **OpenRouter** (modelos `:free` sem censura/roleplay), **Groq** (Llama/Mixtral ultra-rápido) e **Google AI Studio** (Gemini Flash/Pro gratuito), com possibilidade de definir um modelo rápido dedicado para o Cronista.
 
-4. **Protocolo de Mutação Silenciosa (`<state_update>`):**
-   - Ao final de cada turno, a IA retorna metadados ocultos em `<state_update>` para atualizar atributos (no modo RPG) ou criar/atualizar caixas de memória no Vault (em ambos os modos). O parser intercepta o bloco antes de renderizar a prosa na tela.
+4. **Memória Econômica em 3 Camadas (Token-Saver):**
+   - **Tier A — The Chronicle:** Resumo evolutivo automático disparado quando o chat ultrapassa 12 mensagens, compactando turnos antigos em 1–2 parágrafos densos.
+   - **Tier B — The Vault:** Caixas de fatos imutáveis com `#tags` injetadas no prompt apenas quando acionadas na cena (4 a 6 caixas por turno).
+   - **Tier C — Active Buffer:** Os últimos 8 turnos inteiros (4 pares de fala) para continuidade imediata sem desperdício de tokens.
 
-5. **Mecanismo "Sanguessuga" (Importador de Tropes & Character Cards):**
-   - Importação rápida de bots encontrados na web via **Character Cards V2 (JSON/PNG)**, **Bookmarklet de extração direta do navegador** ou **Colar Bruto + Estruturação Assistida por IA**.
+5. **Protocolo de Mutação Silenciosa (`<state_update>`) & Sanguessuga:**
+   - Metadados ocultos em `<state_update>` atualizam o Vault silenciosamente ao final de cada turno.
+   - Importação rápida de bots via **Character Cards V2 (JSON)**, **Bookmarklet** ou **Colar Bruto**, além do **Arquiteto de Mundos** assistido por IA para gerar campanhas RPG completas.
 
 ---
 
 ## 🛠️ Stack & Infraestrutura
 
-- **Frontend:** React + Vite (JavaScript/JSX) + Tailwind CSS
-- **Hospedagem:** Firebase Hosting (`https://madrpg.web.app`, projeto `mad-pjct`, site `madrpg`).
-- **Persistência local:** `localStorage` para configurações BYOK, perfis, persona, ficha e dados de conversa/memória.
-- **Firebase:** autenticação anônima e Firestore com coleções isoladas `airpg_profiles` e `airpg_chats`; gravação cloud ativa, restando integrar a restauração/sincronização completa entre dispositivos. Personas ficam locais; Firebase Storage para avatares ainda não está implementado.
+- **Frontend:** React 18 + Vite (JavaScript/JSX) + Tailwind CSS v3 + `lucide-react`
+- **Hospedagem & Backend:** Firebase Hosting (`https://madrpg.web.app`, projeto `mad-pjct`), Firebase Auth (`GoogleAuthProvider`) e Cloud Firestore (`airpg_users/{uid}/...`).
 
 ---
 
-## 🗺️ Roadmap Vertical (Do Zero ao MVP Jogável)
+## 🗺️ Roadmap Vertical
 
-Legenda: **[x] implementado no código** · **[~] parcial** · **[ ] pendente**.
+Legenda: **[x] implementado** · **[~] parcial** · **[ ] pendente**.
 
-- [x] **Passo 1: Fundação, BYOK e interface**
-  - App Vite/React, configuração de modelos/chaves no `localStorage` e interface com perfis, chat e painéis contextuais.
+- [x] **Passo 1: Fundação, BYOK e Interface**
+  - App Vite/React, configuração de modelos/chaves e interface responsiva.
 - [x] **Passo 2: Inferência e `<state_update>`**
-  - Serviço para OpenRouter, Groq e Gemini; prompts Freeroam/Hardcore; parser que separa narrativa e mutações.
-- [~] **Passo 3: Perfis, User Persona e Sanguessuga**
-  - Perfis/persona, importação de Character Card JSON e texto, além de bookmarklet implementados.
-  - PNG ainda não é suportado; persistência cloud da persona também pendente.
-- [x] **Passo 4: Memória — The Vault e The Chronicle**
-  - Seleção de lore por tags/contexto, aplicação de `vault_updates` e compressão de mensagens antigas em crônica integradas ao app.
-- [x] **Passo 5: RPG Hardcore**
-  - Ficha de Dungeon World e resolução determinística PbtA (2d6 + atributo); não é um sistema d20/d100.
-- [~] **Passo 6: Firebase e sincronização**
-  - Projeto `mad-pjct` configurado, Auth anônima ativa, regras Firestore publicadas (`airpg_profiles`/`airpg_chats`), gravação cloud conectada e app publicado em `https://madrpg.web.app`.
-  - Pendente: restaurar dados cloud automaticamente no app, completar estratégia de sincronização entre dispositivos e adicionar Storage para avatares.
+  - Serviço para OpenRouter, Groq e Gemini; parser que separa prosa e mutações de memória.
+- [x] **Passo 3: Autenticação Google (Gmail) & Sincronização Cloud por Usuário**
+  - Tela de login obrigatória (`LoginScreen.jsx`), isolamento completo em `airpg_users/{uid}`, sincronização automática de chaves BYOK, User Persona, perfis, ficha Dungeon Paper e histórico de chats entre dispositivos.
+- [ ] **Passo 4: Separação Completa dos Dois Mundos (Personagens vs. Campanhas RPG)**
+  - Coleções separadas (`characters` vs. `campaigns`), abas dedicadas no Feed, remoção da alternância de modo dentro do chat e ficha vinculada por campanha.
+- [ ] **Passo 5: Interruptor Realista vs. Modo Deus (`godMode`)**
+  - Motores de prompt separados (`chatPromptBuilder.js` e `rpgPromptBuilder.js`) com regras rígidas anti-bajulação e toggle no topo do chat.
+- [ ] **Passo 6: Memória Econômica Automática & BYOK Multi-Agente**
+  - Disparo automático do Cronista acima de 12 mensagens, buffer otimizado de 8 turnos e seletor opcional de modelo secundário rápido/gratuito para compactação.
+
+---
 
 ## 💡 Ideias e decisões em acompanhamento
 
-- **Confirmado:** manter `IAgent.md` como guia compacto para agentes e log de cada mudança; este README é o roadmap e registro legível para pessoas.
-- **Confirmado:** publicar o app sob o domínio `https://madrpg.web.app` (site `madrpg` dentro do projeto `mad-pjct`) com coleções isoladas no Firestore.
-- Novas propostas discutidas devem entrar aqui com estado **proposta**, **em discussão**, **aprovada** ou **descartada**; atualizar os passos afetados quando houver decisão ou correção.
+- **Aprovado:** manter `IAgent.md` como guia arquitetural para agentes e este `README.md` como roadmap legível.
+- **Aprovado:** separar totalmente **Personagens (Conversa Livre)** e **Campanhas RPG (PbtA)** em coleções, abas e prompts distintos, mantendo apenas o toggle **Realista / Modo Deus** em comum.
+- **Aprovado:** priorizar economia máxima de tokens e requisições para rodar confortavelmente em tiers gratuitos (OpenRouter `:free`, Groq e Gemini).

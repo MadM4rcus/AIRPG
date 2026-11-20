@@ -1,91 +1,72 @@
-# AIRPG — Guia e registro operacional para agentes de IA
+# IAgent.md — Contexto Mestre & Diretrizes Arquiteturais do Projeto AIRPG
 
-## Leia primeiro / faça sempre
-1. Leia este guia; use `README.md` para o roadmap e as decisões destinadas a pessoas.
-2. Confira o código, os arquivos relevantes e `git status`; não presuma que documentação antiga descreve o estado atual.
-3. Faça mudanças pequenas e relacionadas ao pedido; preserve trabalho preexistente. Não reverta alterações alheias.
-4. Valide o que mudou. `package.json` oferece `npm run build`; não há script de testes ou lint configurado.
-5. Após qualquer mudança no projeto, atualize este arquivo: corrija o inventário se necessário e acrescente uma linha ao log. Inclua também mudanças apenas documentais.
-6. Atualize o roadmap do `README.md` quando status, ideia discutida ou decisão/correção do plano mudar. Diferencie propostas de decisões aprovadas; não transforme especulação em requisito.
-7. Na resposta final, resuma alteração, validação e pendências; não declare o que não verificou.
+Este documento contém o conhecimento arquitetural, as regras de negócio e o estado atual do projeto **AIRPG** (`https://madrpg.web.app`). Leia-o integralmente antes de propor alterações de código.
 
-## Dados pessoais e segredos — prioridade
-- `zzznotes.md`, `zzznotes.*` e `zzznotes/` são anotações pessoais do proprietário: não ler, pesquisar, copiar, resumir ou divulgar seu conteúdo.
-- Exceção: se o proprietário pedir explicitamente uma edição, altere apenas o trecho solicitado sem consultar nem reproduzir valores secretos existentes; não registre o conteúdo alterado no log.
-- `.gitignore` já ignora esses caminhos. Nunca force sua inclusão (`git add -f`) nem os envie a serviços externos.
-- `.env*` também é privado/ignorado. Não inclua seus valores em código, docs, logs, comandos ou respostas; consulte apenas nomes de variáveis quando necessário.
+---
 
-## Projeto e dependências
-AIRPG é um app React/Vite de roleplay com BYOK, memória Vault/Chronicle, perfis e regras PbtA/Dungeon World. Código em JavaScript/JSX, sem TypeScript.
+## 1. Visão Geral & Stack Tecnológica
 
-- Dependências de execução (`package.json`): `react`, `react-dom`, `firebase`, `lucide-react`.
-- Desenvolvimento/build: `vite`, `@vitejs/plugin-react`, `tailwindcss`, `@tailwindcss/vite`.
-- `package-lock.json` fixa a árvore de dependências npm. Não editar manualmente; use npm ao mudar dependências.
-- Scripts: `npm run dev` inicia Vite; `npm run build` compila; `npm run preview` serve o build. Não há scripts de teste/lint.
+O **AIRPG** é uma plataforma Web/Mobile-First de Roleplay Narrativo e RPG de Mesa com IA, baseada em **BYOK (Bring Your Own Key)** e **Autenticação Google (Gmail)** obrigatória antes do acesso à interface.
 
-## Infraestrutura & Deploy (Produção)
-- **URL Oficial:** `https://madrpg.web.app`
-- **Projeto Firebase:** `mad-pjct` (site Hosting: `madrpg`; diretório público: `dist`)
-- **Banco de Dados & Auth:** Firebase Anonymous Auth e Firestore com coleções isoladas `airpg_profiles` e `airpg_chats` protegidas por `request.auth.uid`.
-- **Comando de publicação:** `npm run build && firebase deploy --only hosting`
+* **Frontend:** React 18 + Vite + Tailwind CSS v3 + `lucide-react`
+* **Infraestrutura & Banco de Dados:** Firebase Hosting (`madrpg.web.app`), Firebase Auth (`GoogleAuthProvider`) e Cloud Firestore (`mad-pjct`)
+* **Provedores LLM Suportados:** OpenRouter (`:free` e pagos), Groq e Google Gemini.
+* **Foco de Custo:** Máxima economia de tokens e requisições (ideal para tiers gratuitos), mantendo coerência de memória em 3 camadas.
 
-## Inventário retrospectivo dos arquivos
-Estado/função atual inspecionados em 2026-11-20. Isto é um mapa do conteúdo, não um histórico cronológico de cada edição; não invente autoria ou mudanças passadas.
+---
 
-### Raiz
-- `.gitignore` — exclui dependências/build, arquivos locais de ambiente e notas pessoais (`zzznotes*`).
-- `firebase.json` — configuração do Firebase Hosting apontando para o site `madrpg` e pasta `dist` (SPA rewrite para `/index.html`).
-- `.firebaserc` — vínculo do diretório com o projeto Firebase `mad-pjct`.
-- `package.json` — metadados, dependências e comandos npm.
-- `package-lock.json` — versões resolvidas das dependências npm.
-- `vite.config.js` — plugins React e Tailwind para Vite.
-- `index.html` — documento inicial, metadados e ponto de montagem React.
-- `README.md` — apresentação humana, manifesto, estado do roadmap e ideias/decisões.
-- `IAgent.md` — este guia, inventário do código e log conciso para agentes.
-- `GEMINI.md` — removido na cópia de trabalho atual; conteúdo não inspecionado. Não restaurar sem pedido.
-- `.env` — configuração local do Firebase (`mad-pjct`); ignorada pelo Git. Nunca registrar valores.
+## 2. Arquitetura de Dois Mundos Separados (Sem Mistura de Modos)
 
-### Aplicação e estilos (`src/`)
-- `main.jsx` — cria a raiz React, importa o CSS e monta `App`.
-- `App.jsx` — tela e estado centrais; integra chat, perfis, BYOK, prompt, memória (buffer de 10 turnos + Vault + Chronicle), ficha, modais, avatares URL/emoji e status de gravação cloud.
-- `index.css` — importa Tailwind e define estilos base da interface.
+O aplicativo é dividido em **duas experiências e coleções completamente independentes**, sem botão de alternância de modo dentro de um mesmo chat:
 
-### UI (`src/components/`)
-- `BYOKModal.jsx` — configura provedor, modelo e chave de API.
-- `DungeonPaperModal.jsx` — visualiza/edita ficha Dungeon World, vínculos e inventário; importa/exporta JSON validado.
-- `PbtaRollModal.jsx` — seleciona movimento, rola 2d6 e confirma resultado para o chat.
-- `SanguessugaModal.jsx` — cria/importa perfil, edita persona e oferece bookmarklet/Arquiteto de Mundos.
-- `WorldArchitectChat.jsx` — conversa com LLM e instancia mundos a partir de blueprint.
+### A. Personagens — Conversa Livre & Narrativa (`type: 'chat'`)
+* **Onde fica:** Aba **Personagens** no Feed + coleção isolada `airpg_users/{uid}/characters`.
+* **Interface:** Limpa, sem ficha de RPG, sem HP e sem botões de rolagem de dados. Gaveta lateral apenas com **The Vault** e **The Chronicle**.
+* **Motor (`chatPromptBuilder.js`):** Foco em diálogo, tensão dramática, romance/NSFW irrestrito e **agência própria dos NPCs**.
 
-### Lógica (`src/engine/`)
-- `cardParser.js` — interpreta Character Cards JSON e texto colado; contém código do bookmarklet.
-- `chronicleCompressor.js` — resume turnos antigos via LLM para atualizar a Chronicle.
-- `dungeonWorldClasses.js` — catálogo de classes/playbooks, PV, carga e movimentos iniciais.
-- `pbtaEngine.js` — movimentos PbtA e resolução determinística 2d6 + atributo.
-- `promptBuilder.js` — monta instruções de modo, personagem, jogador, ficha, Vault e protocolo de mutação.
-- `stateParser.js` — remove `<state_update>` da resposta e interpreta o JSON.
-- `vaultFisher.js` — seleciona caixas de lore relevantes por tags/palavras da cena.
-- `worldArchitectPrompt.js` — instruções e formato JSON do Arquiteto de Mundos.
+### B. Campanhas RPG — Mestre PbtA / Dungeon World (`type: 'rpg'`)
+* **Onde fica:** Aba **Campanhas RPG** no Feed + coleção isolada `airpg_users/{uid}/campaigns` (com ficha Dungeon Paper vinculada).
+* **Interface:** Barra superior com **HP**, acesso rápido à **Ficha Dungeon Paper** e botão de rolagem **`2d6` (Movimentos PbtA)** ao lado do campo de texto.
+* **Motor (`rpgPromptBuilder.js`):** Foco na história do mundo como um todo, consequências reais e **dados `2d6` como juízes absolutos**.
 
-### Estado e integrações
-- `hooks/useBYOK.js` — modelos/provedores e configuração BYOK em `localStorage`.
-- `hooks/useCharacterSheet.js` — ficha Dungeon World, regras de atributos e persistência local.
-- `hooks/useProfiles.js` — perfis e persona padrão, CRUD, persistência local e gravação cloud de novos perfis.
-- `services/llmService.js` — chamadas HTTP para OpenRouter, Groq e Gemini.
-- `services/firebase.js` — configuração Firebase via variáveis de ambiente, Auth anônima e operações Firestore `airpg_profiles`/`airpg_chats`; gravação cloud ativa, restauração completa pendente.
+---
 
-`node_modules/` e `dist/` são artefatos/dependências gerados, ignorados e fora do inventário-fonte. Não inspecione nem documente arquivos pessoais ignorados.
+## 3. Interruptor "Modo Deus" (God Mode — Único Botão em Comum)
 
-## Regras de confiabilidade
-- Não invente requisitos, status, resultados de validação ou comportamento não inspecionado.
-- Atualize documentação relacionada e call sites dependentes; não faça correções fora do escopo.
-- Mantenha erros relevantes visíveis; não introduza fallback silencioso.
-- Evite dependências novas. Prefira testes focados para comportamento novo quando houver infraestrutura adequada.
-- Log em texto simples, pesquisável e econômico; não usar binário/hex: `AAAA-MM-DD | tipo | arquivos | resultado | validação`. Nunca registrar segredos ou dados pessoais.
+Para combater o **viés de bajulação (sycophancy)** das IAs, ambos os tipos de chat compartilham um interruptor no topo: **Realista (God Mode OFF — Padrão)** vs. **Modo Deus (God Mode ON)**.
 
-## Log de alterações
-- 2026-11-20 | docs | `IAgent.md`, `README.md` | Criado protocolo de rastreio e alinhado roadmap à implementação encontrada | revisão documental; sem build
-- 2026-11-20 | inventário | arquivos da raiz e `src/` | Mapeadas responsabilidades atuais, dependências e scripts; registrada a proteção de `zzznotes*` | conferido com código e `package.json`
-- 2026-11-20 | instruções | `IAgent.md` | Definida exceção segura para edições explicitamente solicitadas em notas pessoais | regra de privacidade revisada
-- 2026-11-20 | fix | `src/App.jsx`, `src/hooks/useProfiles.js`, `src/engine/promptBuilder.js`, `src/components/WorldArchitectChat.jsx`, `src/components/DungeonPaperModal.jsx`, `IAgent.md` | Aplicado buffer de 10 turnos, suporte a avatar URL, status real de sync Firebase, gravação cloud de novos perfis, validação de JSON na ficha, limpeza de crases no blueprint e remoção de `diceEngine.js` | build validado com `npm run build`
-- 2026-11-20 | deploy | `firebase.json`, `.firebaserc`, `IAgent.md`, `README.md` | Configurado projeto Firebase `mad-pjct` (Auth Anônima + Firestore `airpg_profiles`/`airpg_chats`) e publicado no Firebase Hosting em `https://madrpg.web.app` | build e deploy concluídos no terminal
+* **Realista (`godMode = false` — Padrão):**
+  * **Nos Personagens:** NPCs têm vontade própria, orgulho, limites, gostos e ritmo emocional. Não cedem instantaneamente a exageros ou avanços forçados do jogador; exigem conquista, coerência e contexto.
+  * **No RPG:** Os dados `2d6`, os atributos, o nível e o equipamento da ficha são a lei. Tentativas impossíveis declaradas sem rolagem ou acima da capacidade do personagem falham de forma verossímil.
+* **Modo Deus (`godMode = true`):**
+  * Libera fantasia de poder / sandbox livre, onde as declarações do jogador são aceitas como verdade absoluta na cena.
+
+---
+
+## 4. Memória Econômica em 3 Camadas (Token-Saver)
+
+1. **Camada A — The Chronicle (`chronicleCompressor.js`):**
+   * Roda automaticamente quando o chat passa de **12 mensagens**, compactando as 6 mais antigas em um resumo factual contínuo (1–2 parágrafos) e limpando-as do buffer ativo. Pode usar um modelo secundário rápido/gratuito configurado no BYOK.
+2. **Camada B — The Vault (`vaultFisher.js` & `stateParser.js`):**
+   * Banco de fatos imutáveis com `#tags` (ex.: `#Local`, `#NPC_Humor`, `#Segredo`). O Pescador RAG injeta apenas as **4 a 6 caixas mais relevantes** por turno.
+3. **Camada C — Buffer Recente:**
+   * Mantém os últimos **8 turnos inteiros** (4 pares de fala) na janela ativa.
+
+---
+
+## 5. Estrutura de Dados no Firestore (Isolada por Usuário)
+
+* `airpg_users/{uid}`: Documento principal com `byokSettings`, `userPersona` e `dungeonPaperSheet`.
+* `airpg_users/{uid}/characters/{id}`: Coleção de bots de Conversa Livre.
+* `airpg_users/{uid}/campaigns/{id}`: Coleção de Campanhas RPG (com ficha e estado próprio).
+* `airpg_users/{uid}/chats/{id}`: Histórico de mensagens, `vault` e `chronicle` de cada sessão.
+
+---
+
+## 6. Estado Atual de Implementação
+
+* **Concluído:** Login Google (`LoginScreen.jsx`), isolamento de dados por `uid` no Firestore (`airpg_users/{uid}`), sincronização automática de BYOK, User Persona, Ficha Dungeon Paper, perfis e chats.
+* **Próxima Etapa (Em Execução):**
+  1. Separar `firebase.js` e `useProfiles.js` em duas coleções distintas: `characters` (Conversa Livre) e `campaigns` (RPG Hardcore PbtA).
+  2. Criar `chatPromptBuilder.js` e `rpgPromptBuilder.js` com suporte ao toggle `godMode` (padrão `false` = Realista / Anti-bajulação).
+  3. Atualizar Feed (com abas **Personagens** e **Campanhas RPG**) e Chat (interface específica por tipo + Cronista automático acima de 12 turnos).
