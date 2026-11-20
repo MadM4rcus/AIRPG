@@ -35,6 +35,7 @@ import { useCharacterSheet } from './hooks/useCharacterSheet';
 import BYOKModal from './components/BYOKModal';
 import SanguessugaModal from './components/SanguessugaModal';
 import CodexModal from './components/CodexModal';
+import PersonaLibraryModal from './components/PersonaLibraryModal';
 import PbtaRollModal from './components/PbtaRollModal';
 import DungeonPaperModal from './components/DungeonPaperModal';
 import LoginScreen from './components/LoginScreen';
@@ -97,8 +98,12 @@ export default function App() {
     setActiveProfileId,
     addProfile,
     deleteProfile,
+    personas,
+    activePersonaId,
     userPersona,
-    saveUserPersona,
+    selectPersona,
+    savePersona,
+    deletePersona,
     hydrateFromCloud,
   } = useProfiles(uid);
 
@@ -133,7 +138,6 @@ export default function App() {
   const [isPbtaRollOpen, setIsPbtaRollOpen] = useState(false);
   const [isDungeonPaperOpen, setIsDungeonPaperOpen] = useState(false);
   const [isPersonaOpen, setIsPersonaOpen] = useState(false);
-  const [personaDraft, setPersonaDraft] = useState(userPersona);
 
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const [rightDrawerTab, setRightDrawerTab] = useState('vault');
@@ -203,7 +207,7 @@ export default function App() {
         if (userDoc?.dungeonPaperSheet) {
           hydrateSheetFromCloud(userDoc.dungeonPaperSheet);
         }
-        hydrateFromCloud(cloudChars, cloudCamps, userDoc?.userPersona);
+        hydrateFromCloud(cloudChars, cloudCamps, userDoc?.userPersona, userDoc);
         hydrateCodexFromCloud(cloudCodex);
 
         if (cloudChats && Object.keys(cloudChats).length > 0) {
@@ -576,14 +580,11 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => {
-                  setPersonaDraft(userPersona);
-                  setIsPersonaOpen(true);
-                }}
+                onClick={() => setIsPersonaOpen(true)}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:border-zinc-700"
-                title="Editar sua Persona"
+                title="Biblioteca de Personas (Alternar ou editar personagem)"
               >
-                <User className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-sm leading-none">{userPersona.avatar || '🧑'}</span>
                 <span className="font-medium max-w-[80px] truncate">
                   {userPersona.name}
                 </span>
@@ -888,6 +889,18 @@ export default function App() {
                 </button>
               )}
 
+              {/* Atalho Biblioteca de Personas para ciclar na hora */}
+              <button
+                onClick={() => setIsPersonaOpen(true)}
+                className="p-1.5 px-2 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 hover:border-amber-500/40 flex items-center gap-1 transition"
+                title={`Jogando como: ${userPersona.name} (Clique para trocar persona)`}
+              >
+                <span className="text-xs leading-none">{userPersona.avatar || '🧑'}</span>
+                <span className="hidden md:inline max-w-[70px] truncate font-medium">
+                  {userPersona.name}
+                </span>
+              </button>
+
               {/* Interruptor Realista (Padrão) vs Modo Deus */}
               <button
                 onClick={() => setGodMode((prev) => !prev)}
@@ -905,12 +918,12 @@ export default function App() {
                 {godMode ? (
                   <>
                     <Crown className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Modo Deus</span>
+                    <span className="hidden sm:inline">Modo Deus</span>
                   </>
                 ) : (
                   <>
                     <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Realista</span>
+                    <span className="hidden sm:inline">Realista</span>
                   </>
                 )}
               </button>
@@ -1010,7 +1023,7 @@ export default function App() {
                   }`}
                 >
                   {msg.role === 'user' ? (
-                    '👤'
+                    <span>{userPersona.avatar || '🧑'}</span>
                   ) : (
                     <AvatarDisplay avatar={activeProfile.avatar} />
                   )}
@@ -1478,70 +1491,20 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Modal rápido para editar User Persona */}
-      {isPersonaOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md p-5 space-y-3 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-zinc-100">
-                Sua Persona (Protagonista)
-              </h3>
-              <button
-                onClick={() => setIsPersonaOpen(false)}
-                className="p-1 text-zinc-400 hover:text-zinc-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <input
-              type="text"
-              placeholder="Seu nome"
-              value={personaDraft.name || ''}
-              onChange={(e) =>
-                setPersonaDraft({ ...personaDraft, name: e.target.value })
-              }
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100"
-            />
-            <input
-              type="text"
-              placeholder="Aparência breve"
-              value={personaDraft.appearance || ''}
-              onChange={(e) =>
-                setPersonaDraft({ ...personaDraft, appearance: e.target.value })
-              }
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100"
-            />
-            <textarea
-              rows={3}
-              placeholder="Personalidade / Histórico curto"
-              value={personaDraft.description || ''}
-              onChange={(e) =>
-                setPersonaDraft({ ...personaDraft, description: e.target.value })
-              }
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 resize-none"
-            />
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                onClick={() => setIsPersonaOpen(false)}
-                className="px-3 py-1.5 text-xs text-zinc-400"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  saveUserPersona(personaDraft);
-                  setIsPersonaOpen(false);
-                }}
-                className="px-4 py-1.5 rounded-lg bg-amber-500 text-zinc-950 font-bold text-xs"
-              >
-                Salvar Persona
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Modais */}
+      <PersonaLibraryModal
+        isOpen={isPersonaOpen}
+        onClose={() => setIsPersonaOpen(false)}
+        personas={personas}
+        activePersonaId={activePersonaId}
+        onSelectPersona={(id) => {
+          selectPersona(id);
+          setIsPersonaOpen(false);
+        }}
+        onSavePersona={savePersona}
+        onDeletePersona={deletePersona}
+      />
+
       <BYOKModal
         isOpen={isBYOKOpen}
         onClose={() => setIsBYOKOpen(false)}

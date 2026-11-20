@@ -5,232 +5,291 @@ import {
   saveUserDocToCloud,
 } from '../services/firebase';
 
-export const DEFAULT_CHARACTERS = [
+const DEFAULT_CHARACTERS = [
   {
-    id: 'kaelen_chat_default',
+    id: 'char_freeroam_default',
     type: 'chat',
-    name: 'Kaelen, Mercador do Vazio',
-    avatar: '🪐',
-    tag: 'Sci-Fi / Cyber',
+    name: 'Taverna da Encruzilhada',
+    avatar: '🍺',
+    tag: 'Freeroam Vivo',
     personality:
-      'Contrabandista sarcástico, oportunista com senso de humor ácido. Especialista em artefatos ilegais e tecnologia de dobra quântica. Não confia fácil e não se impressiona com bravatas.',
+      'Um mundo de fantasia sombria onde cada viajante, taverneiro e mercenário possui interesses próprios, memória e desconfiança natural.',
     scenario:
-      'Beco iluminado por neon turvo nos níveis inferiores da Estação Orbital Neo-Valhalla.',
+      'Noite chuvosa na Taverna do Corvo Manco. O fogo da lareira crepita enquanto conversas baixas ecoam pelas mesas de madeira.',
     firstMessage:
-      '— Ei, você aí. Olha para os dois lados antes de chegar perto da minha banca. Os pacificadores da guilda estão de olho. Se você tem os créditos, eu tenho as relíquias que você não acha em nenhum catálogo oficial.',
-    initialVault: [
-      {
-        tag: '#NeoValhalla',
-        content: 'Estação orbital mineradora à beira do colapso econômico.',
-      },
-      {
-        tag: '#Kaelen_Humor',
-        content: 'Desconfiado, pragmático e avesso a quem tenta dar uma de valente.',
-      },
-    ],
+      'A porta pesada range quando você entra, trazendo uma lufada de vento frio e cheiro de chuva. Atrás do balcão, Valéria ergue os olhos de uma adaga que limpava, avaliando você de cima a baixo antes de voltar ao trabalho. — Se veio arrumar confusão, deixe o ouro no balcão antes.',
+    pinnedCodexIds: ['codex_valeria_npc', 'codex_taverna_corvo'],
+    initialVault: [],
   },
 ];
 
-export const DEFAULT_CAMPAIGNS = [
+const DEFAULT_CAMPAIGNS = [
   {
-    id: 'aethelgard_rpg_default',
+    id: 'camp_pbta_default',
     type: 'rpg',
-    name: 'As Ruínas de Aethelgard',
+    name: 'Crônicas das Cinzas',
     avatar: '⚔️',
-    tag: 'Dark Fantasy • PbtA',
+    tag: 'Dungeon World • PbtA',
     personality:
-      'Mestre de RPG imparcial de Dark Fantasy. Conduz o mundo de Aethelgard e seus habitantes (incluindo Valéria, a Sentinela Decaída) com rigor narrativo e mecânico.',
+      'Campanha de fantasia implacável. Recursos são escassos, ferimentos cobram seu preço e os dados 2d6 decidem o destino.',
     scenario:
-      'Posto Avançado nas Ruínas de Aethelgard. Uma tempestade de chuva fria açoita as pedras arruinadas. Valéria, uma guerreira cínica de armadura oxidada, vigia a entrada da Cripta Esquecida.',
+      'As ruínas submersas de Oakhaven, onde cultistas buscam despertar um selo antigo sob a névoa.',
     firstMessage:
-      'A chuva gelada açoita as pedras partidas do Posto Avançado. Diante da entrada selada da Cripta Esquecida, Valéria mantém a mão firme no punho de sua lâmina larga, observando sua aproximação com olhos cansados.\n\n— Você demorou mais do que eu esperava para atravessar o pântano. Se veio atrás das relíquias lá de baixo, verifique suas provisões e sua lâmina — os mortos de Aethelgard não perdoam erros.',
-    initialVault: [
-      {
-        tag: '#Aethelgard',
-        content: 'Fortaleza arruinada há 300 anos após o Rompimento Astral.',
-      },
-      {
-        tag: '#NPC_Valeria',
-        content: 'Sentinela veterana; cautelosa com forasteiros e exige competência real.',
-      },
-    ],
+      'A névoa fria cobre seus tornozelos na entrada da cripta de Oakhaven. Tochas tremeluzem no corredor à frente e o som metálico de lâminas sendo desembainhadas ecoa nas pedras úmidas. O que você faz?',
+    pinnedCodexIds: ['codex_regra_eter'],
+    initialVault: [],
   },
 ];
 
-export const DEFAULT_USER_PERSONA = {
-  name: 'Viajante',
-  appearance: 'Capa surrada de viagem, olhos atentos e porte reservado.',
-  description:
-    'Um aventureiro solitário em busca de respostas, sobrevivendo pelos cantos esquecidos do mundo.',
-};
+const DEFAULT_PERSONAS = [
+  {
+    id: 'persona_default',
+    name: 'Viajante',
+    avatar: '🧑',
+    appearance: 'Roupas práticas de viagem, olhar atento.',
+    description: 'Pragmático, observador e cauteloso ao lidar com estranhos.',
+  },
+];
 
 export function useProfiles(uid) {
-  const charsStorageKey = uid ? `airpg_characters_${uid}` : 'airpg_characters';
-  const campsStorageKey = uid ? `airpg_campaigns_${uid}` : 'airpg_campaigns';
-  const personaStorageKey = uid ? `airpg_user_persona_${uid}` : 'airpg_user_persona';
+  const charsKey = uid ? `airpg_chars_${uid}` : 'airpg_chars';
+  const campsKey = uid ? `airpg_camps_${uid}` : 'airpg_camps';
+  const personasKey = uid ? `airpg_personas_${uid}` : 'airpg_personas';
+  const activePersonaKey = uid
+    ? `airpg_active_persona_${uid}`
+    : 'airpg_active_persona';
 
   const [characters, setCharacters] = useState(() => {
     try {
-      const stored = localStorage.getItem(charsStorageKey);
-      if (stored) return JSON.parse(stored);
+      const s = localStorage.getItem(charsKey);
+      if (s) return JSON.parse(s);
     } catch (e) {}
     return DEFAULT_CHARACTERS;
   });
 
   const [campaigns, setCampaigns] = useState(() => {
     try {
-      const stored = localStorage.getItem(campsStorageKey);
-      if (stored) return JSON.parse(stored);
+      const s = localStorage.getItem(campsKey);
+      if (s) return JSON.parse(s);
     } catch (e) {}
     return DEFAULT_CAMPAIGNS;
   });
 
-  const [activeEntityId, setActiveEntityId] = useState(() => {
-    return characters[0]?.id || campaigns[0]?.id || 'kaelen_chat_default';
+  const [personas, setPersonas] = useState(() => {
+    try {
+      const s = localStorage.getItem(personasKey);
+      if (s) {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return DEFAULT_PERSONAS;
   });
 
-  const [userPersona, setUserPersona] = useState(() => {
+  const [activePersonaId, setActivePersonaId] = useState(() => {
     try {
-      const stored = localStorage.getItem(personaStorageKey);
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return DEFAULT_USER_PERSONA;
+      return localStorage.getItem(activePersonaKey) || 'persona_default';
+    } catch (e) {
+      return 'persona_default';
+    }
   });
+
+  const [activeProfileId, setActiveProfileId] = useState(
+    DEFAULT_CHARACTERS[0].id
+  );
 
   useEffect(() => {
     try {
-      const storedChars = localStorage.getItem(charsStorageKey);
-      const nextChars = storedChars ? JSON.parse(storedChars) : DEFAULT_CHARACTERS;
-      setCharacters(nextChars);
+      const sc = localStorage.getItem(charsKey);
+      setCharacters(sc ? JSON.parse(sc) : DEFAULT_CHARACTERS);
 
-      const storedCamps = localStorage.getItem(campsStorageKey);
-      const nextCamps = storedCamps ? JSON.parse(storedCamps) : DEFAULT_CAMPAIGNS;
-      setCampaigns(nextCamps);
+      const sm = localStorage.getItem(campsKey);
+      setCampaigns(sm ? JSON.parse(sm) : DEFAULT_CAMPAIGNS);
 
-      setActiveEntityId(nextChars[0]?.id || nextCamps[0]?.id);
+      const sp = localStorage.getItem(personasKey);
+      const parsedP = sp ? JSON.parse(sp) : DEFAULT_PERSONAS;
+      setPersonas(
+        Array.isArray(parsedP) && parsedP.length > 0
+          ? parsedP
+          : DEFAULT_PERSONAS
+      );
 
-      const storedPersona = localStorage.getItem(personaStorageKey);
-      setUserPersona(storedPersona ? JSON.parse(storedPersona) : DEFAULT_USER_PERSONA);
+      const sap = localStorage.getItem(activePersonaKey);
+      if (sap) setActivePersonaId(sap);
     } catch (e) {}
-  }, [charsStorageKey, campsStorageKey, personaStorageKey]);
+  }, [charsKey, campsKey, personasKey, activePersonaKey]);
 
-  const persistCharacters = (nextList) => {
-    setCharacters(nextList);
+  const allProfiles = [...characters, ...campaigns];
+  const activeProfile =
+    allProfiles.find((p) => p.id === activeProfileId) ||
+    characters[0] ||
+    campaigns[0] ||
+    DEFAULT_CHARACTERS[0];
+
+  const userPersona =
+    personas.find((p) => p.id === activePersonaId) ||
+    personas[0] ||
+    DEFAULT_PERSONAS[0];
+
+  const persistPersonas = (nextList, nextActiveId = activePersonaId) => {
+    setPersonas(nextList);
+    setActivePersonaId(nextActiveId);
     try {
-      localStorage.setItem(charsStorageKey, JSON.stringify(nextList));
+      localStorage.setItem(personasKey, JSON.stringify(nextList));
+      localStorage.setItem(activePersonaKey, nextActiveId);
     } catch (e) {}
+
+    const activeObj =
+      nextList.find((p) => p.id === nextActiveId) || nextList[0];
+    if (uid) {
+      saveUserDocToCloud(uid, {
+        personas: nextList,
+        activePersonaId: nextActiveId,
+        userPersona: activeObj,
+      });
+    }
   };
 
-  const persistCampaigns = (nextList) => {
-    setCampaigns(nextList);
-    try {
-      localStorage.setItem(campsStorageKey, JSON.stringify(nextList));
-    } catch (e) {}
+  const selectPersona = (personaId) => {
+    persistPersonas(personas, personaId);
   };
 
-  const hydrateFromCloud = (cloudChars, cloudCamps, cloudPersona) => {
+  const savePersona = (personaData) => {
+    if (personaData.id) {
+      const updated = personas.map((p) =>
+        p.id === personaData.id ? { ...p, ...personaData } : p
+      );
+      persistPersonas(updated, personaData.id);
+      return personaData;
+    } else {
+      const newPersona = {
+        id: `persona_${Date.now()}`,
+        name: personaData.name?.trim() || 'Nova Persona',
+        avatar: personaData.avatar?.trim() || '🧑',
+        appearance: personaData.appearance?.trim() || '',
+        description: personaData.description?.trim() || '',
+      };
+      persistPersonas([newPersona, ...personas], newPersona.id);
+      return newPersona;
+    }
+  };
+
+  const deletePersona = (personaId) => {
+    if (personas.length <= 1) return;
+    const filtered = personas.filter((p) => p.id !== personaId);
+    const nextActive =
+      activePersonaId === personaId ? filtered[0].id : activePersonaId;
+    persistPersonas(filtered, nextActive);
+  };
+
+  const addProfile = (profileData) => {
+    const isRpg = profileData.type === 'rpg';
+    const newItem = {
+      ...profileData,
+      id: `${isRpg ? 'camp' : 'char'}_${Date.now()}`,
+      type: isRpg ? 'rpg' : 'chat',
+    };
+
+    if (isRpg) {
+      const next = [newItem, ...campaigns];
+      setCampaigns(next);
+      try {
+        localStorage.setItem(campsKey, JSON.stringify(next));
+      } catch (e) {}
+    } else {
+      const next = [newItem, ...characters];
+      setCharacters(next);
+      try {
+        localStorage.setItem(charsKey, JSON.stringify(next));
+      } catch (e) {}
+    }
+
+    if (uid) saveEntityToCloud(uid, newItem);
+    setActiveProfileId(newItem.id);
+    return newItem;
+  };
+
+  const deleteProfile = (id, type) => {
+    if (type === 'rpg') {
+      const next = campaigns.filter((c) => c.id !== id);
+      setCampaigns(next);
+      try {
+        localStorage.setItem(campsKey, JSON.stringify(next));
+      } catch (e) {}
+    } else {
+      const next = characters.filter((c) => c.id !== id);
+      setCharacters(next);
+      try {
+        localStorage.setItem(charsKey, JSON.stringify(next));
+      } catch (e) {}
+    }
+    if (uid) deleteEntityFromCloud(uid, id, type);
+  };
+
+  const hydrateFromCloud = (
+    cloudChars,
+    cloudCamps,
+    cloudLegacyPersona,
+    cloudUserDoc = {}
+  ) => {
     if (Array.isArray(cloudChars) && cloudChars.length > 0) {
-      const ids = new Set(cloudChars.map((c) => c.id));
-      const merged = [
-        ...cloudChars.map((c) => ({ ...c, type: 'chat' })),
-        ...DEFAULT_CHARACTERS.filter((dc) => !ids.has(dc.id)),
-      ];
-      persistCharacters(merged);
+      setCharacters(cloudChars);
+      try {
+        localStorage.setItem(charsKey, JSON.stringify(cloudChars));
+      } catch (e) {}
     }
     if (Array.isArray(cloudCamps) && cloudCamps.length > 0) {
-      const ids = new Set(cloudCamps.map((c) => c.id));
-      const merged = [
-        ...cloudCamps.map((c) => ({ ...c, type: 'rpg' })),
-        ...DEFAULT_CAMPAIGNS.filter((dc) => !ids.has(dc.id)),
-      ];
-      persistCampaigns(merged);
-    }
-    if (cloudPersona && typeof cloudPersona === 'object') {
-      setUserPersona(cloudPersona);
+      setCampaigns(cloudCamps);
       try {
-        localStorage.setItem(personaStorageKey, JSON.stringify(cloudPersona));
+        localStorage.setItem(campsKey, JSON.stringify(cloudCamps));
+      } catch (e) {}
+    }
+
+    if (
+      Array.isArray(cloudUserDoc?.personas) &&
+      cloudUserDoc.personas.length > 0
+    ) {
+      const nextActive =
+        cloudUserDoc.activePersonaId || cloudUserDoc.personas[0].id;
+      setPersonas(cloudUserDoc.personas);
+      setActivePersonaId(nextActive);
+      try {
+        localStorage.setItem(
+          personasKey,
+          JSON.stringify(cloudUserDoc.personas)
+        );
+        localStorage.setItem(activePersonaKey, nextActive);
+      } catch (e) {}
+    } else if (cloudLegacyPersona?.name) {
+      const migrated = [
+        {
+          id: 'persona_default',
+          avatar: '🧑',
+          ...cloudLegacyPersona,
+        },
+      ];
+      setPersonas(migrated);
+      setActivePersonaId('persona_default');
+      try {
+        localStorage.setItem(personasKey, JSON.stringify(migrated));
+        localStorage.setItem(activePersonaKey, 'persona_default');
       } catch (e) {}
     }
   };
 
-  const saveUserPersona = (newPersona) => {
-    setUserPersona(newPersona);
-    try {
-      localStorage.setItem(personaStorageKey, JSON.stringify(newPersona));
-    } catch (e) {}
-    if (uid) {
-      saveUserDocToCloud(uid, { userPersona: newPersona });
-    }
-  };
-
-  const addEntity = (entityData) => {
-    const entityType = entityData.type === 'rpg' ? 'rpg' : 'chat';
-    const newEntity = {
-      id: `${entityType}_${Date.now()}`,
-      type: entityType,
-      avatar: entityData.avatar || (entityType === 'rpg' ? '⚔️' : '🎭'),
-      name: entityData.name || 'Sem Nome',
-      tag: entityData.tag || (entityType === 'rpg' ? 'Campanha PbtA' : 'Personagem'),
-      personality: entityData.personality || '',
-      scenario: entityData.scenario || '',
-      firstMessage: entityData.firstMessage || '...',
-      initialVault: entityData.initialVault || [],
-    };
-
-    if (entityType === 'rpg') {
-      persistCampaigns([newEntity, ...campaigns]);
-    } else {
-      persistCharacters([newEntity, ...characters]);
-    }
-
-    setActiveEntityId(newEntity.id);
-
-    if (uid) {
-      saveEntityToCloud(uid, newEntity);
-    }
-
-    return newEntity;
-  };
-
-  const deleteEntity = (id, type) => {
-    const targetType =
-      type ||
-      (campaigns.some((c) => c.id === id) ? 'rpg' : 'chat');
-
-    if (targetType === 'rpg') {
-      const updated = campaigns.filter((c) => c.id !== id);
-      if (updated.length === 0) return;
-      persistCampaigns(updated);
-      if (activeEntityId === id) setActiveEntityId(updated[0].id);
-    } else {
-      const updated = characters.filter((c) => c.id !== id);
-      if (updated.length === 0) return;
-      persistCharacters(updated);
-      if (activeEntityId === id) setActiveEntityId(updated[0].id);
-    }
-
-    if (uid) {
-      deleteEntityFromCloud(uid, id, targetType);
-    }
-  };
-
-  const allEntities = [...characters, ...campaigns];
-  const activeProfile =
-    allEntities.find((item) => item.id === activeEntityId) ||
-    characters[0] ||
-    campaigns[0];
-
   return {
     characters,
     campaigns,
-    profiles: allEntities,
     activeProfile,
-    activeProfileId: activeEntityId,
-    setActiveProfileId: setActiveEntityId,
-    addProfile: addEntity,
-    deleteProfile: deleteEntity,
+    setActiveProfileId,
+    addProfile,
+    deleteProfile,
+    personas,
+    activePersonaId,
     userPersona,
-    saveUserPersona,
+    selectPersona,
+    savePersona,
+    deletePersona,
     hydrateFromCloud,
   };
 }
