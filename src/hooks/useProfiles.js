@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { saveProfileToCloud } from '../services/firebase';
 
 const PROFILES_STORAGE_KEY = 'airpg_profiles_data';
-const SESSIONS_STORAGE_KEY = 'airpg_sessions_history';
 const USER_PERSONA_STORAGE_KEY = 'airpg_user_persona';
 
 export const DEFAULT_PROFILES = [
@@ -97,6 +97,10 @@ export function useProfiles() {
     const updated = [newProfile, ...profiles];
     saveProfiles(updated);
     setActiveProfileId(newProfile.id);
+    
+    // Sincroniza novo mundo/personagem com o Firestore em background
+    saveProfileToCloud(newProfile);
+    
     return newProfile;
   };
 

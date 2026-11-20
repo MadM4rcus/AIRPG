@@ -2,18 +2,11 @@ import { useState } from 'react';
 import { 
   X, 
   Heart, 
-  Shield, 
-  Sparkles, 
   Swords, 
-  Plus, 
   Trash2, 
   Download, 
   Upload, 
-  Check, 
-  BookOpen, 
-  Package, 
-  ScrollText,
-  User
+  Package
 } from 'lucide-react';
 import { DW_CLASSES } from '../engine/dungeonWorldClasses';
 
@@ -40,7 +33,7 @@ export default function DungeonPaperModal({
   if (!isOpen) return null;
 
   const currentClassDef = DW_CLASSES[sheet.classId] || DW_CLASSES.guerreiro;
-  const currentTotalWeight = sheet.inventory.reduce((acc, it) => acc + (Number(it.weight) || 0), 0);
+  const currentTotalWeight = (sheet.inventory || []).reduce((acc, it) => acc + (Number(it.weight) || 0), 0);
   const maxLoad = currentClassDef.loadBase + (sheet.stats.FOR?.mod || 0);
 
   const handleAddBond = (e) => {
@@ -74,7 +67,15 @@ export default function DungeonPaperModal({
     if (!jsonText.trim()) return;
     try {
       const parsed = JSON.parse(jsonText.trim());
-      onSaveFullSheet(parsed);
+      if (!parsed || typeof parsed !== 'object' || !parsed.name || !parsed.stats || !parsed.stats.FOR) {
+        throw new Error('Estrutura de ficha inválida. Certifique-se de incluir "name" e "stats" (FOR, DES, CON, INT, SAB, CAR).');
+      }
+      onSaveFullSheet({
+        ...sheet,
+        ...parsed,
+        bonds: Array.isArray(parsed.bonds) ? parsed.bonds : [],
+        inventory: Array.isArray(parsed.inventory) ? parsed.inventory : [],
+      });
       alert('Ficha Dungeon Paper importada com sucesso!');
     } catch (err) {
       alert('Erro ao importar JSON: ' + err.message);
@@ -326,7 +327,7 @@ export default function DungeonPaperModal({
 
               {/* Lista de Vínculos */}
               <div className="space-y-2">
-                {sheet.bonds.map((bond, idx) => (
+                {(sheet.bonds || []).map((bond, idx) => (
                   <div key={idx} className="group bg-zinc-950/70 border border-zinc-800 rounded-xl p-3 flex items-start justify-between gap-2">
                     <div className="flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0 mt-1.5" />
@@ -392,7 +393,7 @@ export default function DungeonPaperModal({
 
               {/* Lista de Itens */}
               <div className="space-y-1.5">
-                {sheet.inventory.map((item, idx) => (
+                {(sheet.inventory || []).map((item, idx) => (
                   <div key={idx} className="group bg-zinc-950/70 border border-zinc-800 rounded-xl p-2.5 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <Package className="w-3.5 h-3.5 text-amber-400 shrink-0" />

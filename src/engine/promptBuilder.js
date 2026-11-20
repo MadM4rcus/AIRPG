@@ -90,8 +90,7 @@ Exemplo de formato:
 {
   "vault_updates": [
     { "tag": "#Relacao", "content": "Descrição concisa do novo fato ocorrido." }
-  ],
-  "stats_updates": {}
+  ]
 }
 </state_update>
 ATENÇÃO: O bloco <state_update> deve vir SEMPRE no final da resposta e ser JSON válido. O texto antes do bloco é a sua narrativa normal.

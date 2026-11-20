@@ -9,7 +9,6 @@ import {
   BookOpen, 
   PlusCircle, 
   Send, 
-  Menu, 
   X, 
   Loader2, 
   AlertCircle, 
@@ -22,11 +21,10 @@ import {
   Plus, 
   Dices, 
   Heart, 
-  Shield, 
   Activity, 
   ScrollText,
   Cloud,
-  CloudCheck,
+  CloudOff,
   RotateCw
 } from 'lucide-react';
 import { useBYOK } from './hooks/useBYOK';
@@ -41,7 +39,20 @@ import { buildSystemPrompt } from './engine/promptBuilder';
 import { parseAssistantResponse } from './engine/stateParser';
 import { fishRelevantVaultBoxes } from './engine/vaultFisher';
 import { compressMessagesIntoChronicle } from './engine/chronicleCompressor';
-import { saveProfileToCloud, saveChatSessionToCloud } from './services/firebase';
+import { saveChatSessionToCloud } from './services/firebase';
+
+function AvatarDisplay({ avatar, className = 'text-base' }) {
+  if (typeof avatar === 'string' && avatar.startsWith('http')) {
+    return (
+      <img
+        src={avatar}
+        alt="Avatar"
+        className="w-full h-full object-cover rounded-xl"
+      />
+    );
+  }
+  return <span className={className}>{avatar || '🎭'}</span>;
+}
 
 export default function App() {
   const { settings, saveSettings, getActiveConfig } = useBYOK();
@@ -81,7 +92,7 @@ export default function App() {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
-  const [cloudSyncStatus, setCloudSyncStatus] = useState('saved'); // 'saved' | 'syncing'
+  const [cloudSyncStatus, setCloudSyncStatus] = useState('saved'); // 'saved' | 'syncing' | 'error'
   const [errorMessage, setErrorMessage] = useState('');
 
   const [activeFishedTags, setActiveFishedTags] = useState([]);
@@ -132,7 +143,6 @@ export default function App() {
       } catch (e) {}
       return updated;
     });
-    // Sincroniza em nuvem em background
     triggerCloudSync(newMsgs, currentVault, currentChronicle);
   };
 
@@ -161,8 +171,8 @@ export default function App() {
   // Sincronização em background no Firestore (coleção airpg_chats)
   const triggerCloudSync = async (msgs, vault, chronicle) => {
     setCloudSyncStatus('syncing');
-    await saveChatSessionToCloud(activeProfile.id, msgs, vault, chronicle);
-    setCloudSyncStatus('saved');
+    const ok = await saveChatSessionToCloud(activeProfile.id, msgs, vault, chronicle);
+    setCloudSyncStatus(ok ? 'saved' : 'error');
   };
 
   useEffect(() => {
@@ -192,13 +202,12 @@ export default function App() {
     updateCurrentVault(nextVault);
   };
 
-  // Rotina do Chronicle: comprime mensagens antigas se houver mais de 10 turnos acumulados
+  // Rotina do Chronicle: comprime mensagens antigas se houver mais de 5 turnos acumulados
   const handleCompressChronicle = async () => {
     if (currentMessages.length <= 4 || isCompressing) return;
     setIsCompressing(true);
 
     try {
-      // Pega os primeiros turnos exceto a abertura e os últimos 4
       const turnsToCompress = currentMessages.slice(1, -4);
       const remainingMessages = [currentMessages[0], ...currentMessages.slice(-4)];
 
@@ -256,12 +265,15 @@ export default function App() {
         characterSheet: currentMode === 'hardcore' ? sheet : null,
       });
 
+      // Tier C — Active Buffer: envia os últimos 10 turnos para economizar contexto
+      const recentBuffer = updatedMessages.slice(-10);
+
       const messagesForLLM = mechanicalInjection
         ? [
-            ...updatedMessages.slice(0, -1),
+            ...recentBuffer.slice(0, -1),
             { role: 'user', content: `${userText}\n\n${mechanicalInjection}` }
           ]
-        : updatedMessages;
+        : recentBuffer;
 
       const rawResponse = await callLLM({
         messages: messagesForLLM,
@@ -427,9 +439,9 @@ export default function App() {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3">
-                        <span className="text-3xl shrink-0 p-1 bg-zinc-950/80 rounded-xl border border-zinc-800">
-                          {p.avatar}
-                        </span>
+                        <div className="w-11 h-11 shrink-0 bg-zinc-950/80 rounded-xl border border-zinc-800 flex items-center justify-center overflow-hidden">
+                          <AvatarDisplay avatar={p.avatar} className="text-2xl" />
+                        </div>
                         <div>
                           <h4 className="font-bold text-xs text-zinc-100 group-hover:text-amber-400 transition">
                             {p.name}
@@ -498,7 +510,9 @@ export default function App() {
                 <ArrowLeft className="w-5 h-5 text-amber-400" />
               </button>
               <div className="flex items-center gap-2 truncate">
-                <span className="text-lg shrink-0">{activeProfile.avatar}</span>
+                <div className="w-7 h-7 shrink-0 flex items-center justify-center overflow-hidden rounded-lg">
+                  <AvatarDisplay avatar={activeProfile.avatar} className="text-lg" />
+                </div>
                 <div className="truncate">
                   <h2 className="font-bold text-xs text-zinc-100 truncate">{activeProfile.name}</h2>
                   <div className="flex items-center gap-1.5">
@@ -622,13 +636,13 @@ export default function App() {
                 }`}
               >
                 <div
-                  className={`w-8 h-8 rounded-full border flex items-center justify-center text-sm shrink-0 ${
+                  className={`w-8 h-8 rounded-full border flex items-center justify-center text-sm shrink-0 overflow-hidden ${
                     msg.role === 'user'
                       ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
                       : 'bg-zinc-800 border-zinc-700 text-base'
                   }`}
                 >
-                  {msg.role === 'user' ? '👤' : activeProfile.avatar}
+                  {msg.role === 'user' ? '👤' : <AvatarDisplay avatar={activeProfile.avatar} />}
                 </div>
 
                 <div className={`space-y-1 max-w-[85%] ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
@@ -652,8 +666,8 @@ export default function App() {
 
             {isLoading && (
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-base shrink-0">
-                  {activeProfile.avatar}
+                <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-base shrink-0 overflow-hidden">
+                  <AvatarDisplay avatar={activeProfile.avatar} />
                 </div>
                 <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-tl-none p-3.5 flex items-center gap-2 text-xs text-zinc-400">
                   <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
@@ -708,9 +722,21 @@ export default function App() {
               <span className="truncate flex items-center gap-1">
                 <span>{activeConfig.provider.toUpperCase()}</span>
                 <span>•</span>
-                <span className="flex items-center gap-1 text-[9px] text-zinc-400">
-                  <Cloud className="w-3 h-3 text-emerald-500" /> Nuvem
-                </span>
+                {cloudSyncStatus === 'syncing' && (
+                  <span className="flex items-center gap-1 text-[9px] text-amber-400">
+                    <RotateCw className="w-3 h-3 animate-spin" /> Sincronizando...
+                  </span>
+                )}
+                {cloudSyncStatus === 'saved' && (
+                  <span className="flex items-center gap-1 text-[9px] text-zinc-400">
+                    <Cloud className="w-3 h-3 text-emerald-500" /> Nuvem
+                  </span>
+                )}
+                {cloudSyncStatus === 'error' && (
+                  <span className="flex items-center gap-1 text-[9px] text-rose-400" title="Salvo localmente; falha ao enviar ao Firebase">
+                    <CloudOff className="w-3 h-3 text-rose-500" /> Local (Offline)
+                  </span>
+                )}
               </span>
               <span className={currentMode === 'hardcore' ? 'text-rose-400 font-bold' : 'text-amber-400 font-bold'}>
                 {currentMode === 'hardcore' ? 'PBTA / DUNGEON WORLD (2d6)' : 'FREEROAM NARRATIVO'}

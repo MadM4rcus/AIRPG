@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Sparkles, Check, Globe } from 'lucide-react';
+import { Send, Loader2, Sparkles, Globe } from 'lucide-react';
 import { callLLM } from '../services/llmService';
 import { WORLD_ARCHITECT_SYSTEM_PROMPT } from '../engine/worldArchitectPrompt';
 
@@ -45,7 +45,12 @@ export default function WorldArchitectChat({ byokConfig, onInstantiateWorld, onC
       const match = response.match(/<world_blueprint>([\s\S]*?)<\/world_blueprint>/i);
       if (match) {
         try {
-          const parsed = JSON.parse(match[1].trim());
+          // Remove eventuais marcações ```json ou ``` que modelos gratuitos costumam inserir
+          const cleanedJson = match[1]
+            .replace(/^```(?:json)?/i, '')
+            .replace(/```$/i, '')
+            .trim();
+          const parsed = JSON.parse(cleanedJson);
           setBlueprint(parsed);
         } catch (err) {
           console.warn('Erro ao parsear blueprint JSON:', err);
@@ -129,7 +134,11 @@ export default function WorldArchitectChat({ byokConfig, onInstantiateWorld, onC
         {blueprint && (
           <div className="bg-amber-950/40 border border-amber-500/50 rounded-xl p-3 text-xs space-y-2 mt-2">
             <div className="flex items-center gap-2 font-bold text-amber-300">
-              <span className="text-base">{blueprint.avatar}</span>
+              {blueprint.avatar?.startsWith('http') ? (
+                <img src={blueprint.avatar} alt="" className="w-6 h-6 rounded object-cover" />
+              ) : (
+                <span className="text-base">{blueprint.avatar}</span>
+              )}
               <span>Mundo Pronto: {blueprint.name}</span>
             </div>
             <p className="text-[11px] text-zinc-300">{blueprint.scenario}</p>
