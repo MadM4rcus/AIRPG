@@ -1,54 +1,52 @@
 import { useState, useEffect } from 'react';
 import { saveUserDocToCloud } from '../services/firebase';
 
-export const DEFAULT_BYOK_SETTINGS = {
-  activeProvider: 'openrouter',
+export const PROVIDERS = {
   openrouter: {
-    apiKey: '',
-    model: 'nousresearch/hermes-3-llama-3.1-405b:free',
-    baseUrl: 'https://openrouter.ai/api/v1',
+    id: 'openrouter',
+    name: 'OpenRouter (Roleplay / :free)',
+    models: [
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (:free)' },
+      { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 24B (:free)' },
+      { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Hermes 3 405B (:free)' },
+      { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (:free)' },
+      { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek V3 (:free)' },
+      { id: 'custom', name: 'Outro ID de modelo OpenRouter...' },
+    ],
   },
   groq: {
-    apiKey: '',
-    model: 'llama-3.3-70b-versatile',
-    baseUrl: 'https://api.groq.com/openai/v1',
+    id: 'groq',
+    name: 'Groq (Ultra-Rápido / Gratuito)',
+    models: [
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (Grátis)' },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (Econômico)' },
+      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B' },
+      { id: 'custom', name: 'Outro ID de modelo Groq...' },
+    ],
   },
   gemini: {
-    apiKey: '',
-    model: 'gemini-1.5-flash',
-    baseUrl: 'https://generativelanguage.googleapis.com',
+    id: 'gemini',
+    name: 'Google Gemini (AI Studio Grátis)',
+    models: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Grátis / Rápido)' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (Grátis)' },
+      { id: 'custom', name: 'Outro ID de modelo Gemini...' },
+    ],
   },
 };
 
-export const POPULAR_MODELS = {
-  openrouter: [
-    { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B (Free RP/Uncensored)' },
-    { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free / Alta Capacidade)' },
-    { id: 'mistralai/mistral-small-24b-instruct-2501:free', label: 'Mistral Small 24B (Free / Permissivo)' },
-    { id: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1 (Free / Raciocínio Profundo)' },
-    { id: 'google/gemini-2.0-flash-lite-preview-02-05:free', label: 'Gemini 2.0 Flash Lite (Free)' },
-  ],
-  groq: [
-    { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile (Free Tier)' },
-    { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant (Ultra-rápido)' },
-    { id: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B (32k Context)' },
-  ],
-  gemini: [
-    { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Gratuito / Rápido)' },
-    { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Contexto Gigante)' },
-    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Preview)' },
-  ],
+const DEFAULT_SETTINGS = {
+  provider: 'openrouter',
+  apiKey: '',
+  model: 'meta-llama/llama-3.3-70b-instruct:free',
+  customModel: '',
+  temperature: 0.85,
+  // Modelo secundário opcional para compactar The Chronicle sem gastar cota do principal
+  chronicleEnabled: false,
+  chronicleProvider: 'groq',
+  chronicleApiKey: '',
+  chronicleModel: 'llama-3.1-8b-instant',
 };
-
-function mergeSettings(raw) {
-  return {
-    ...DEFAULT_BYOK_SETTINGS,
-    ...(raw || {}),
-    openrouter: { ...DEFAULT_BYOK_SETTINGS.openrouter, ...(raw?.openrouter || {}) },
-    groq: { ...DEFAULT_BYOK_SETTINGS.groq, ...(raw?.groq || {}) },
-    gemini: { ...DEFAULT_BYOK_SETTINGS.gemini, ...(raw?.gemini || {}) },
-  };
-}
 
 export function useBYOK(uid) {
   const storageKey = uid ? `airpg_byok_settings_${uid}` : 'airpg_byok_settings';
@@ -56,63 +54,52 @@ export function useBYOK(uid) {
   const [settings, setSettings] = useState(() => {
     try {
       const stored = localStorage.getItem(storageKey);
-      if (stored) return mergeSettings(JSON.parse(stored));
-    } catch (e) {
-      console.warn('Erro ao ler chaves do localStorage:', e);
-    }
-    return DEFAULT_BYOK_SETTINGS;
+      if (stored) return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+    } catch (e) {}
+    return DEFAULT_SETTINGS;
   });
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem(storageKey);
-      setSettings(stored ? mergeSettings(JSON.parse(stored)) : DEFAULT_BYOK_SETTINGS);
-    } catch (e) {
-      setSettings(DEFAULT_BYOK_SETTINGS);
-    }
+      setSettings(stored ? { ...DEFAULT_SETTINGS, ...JSON.parse(stored) } : DEFAULT_SETTINGS);
+    } catch (e) {}
   }, [storageKey]);
 
-  const hydrateSettingsFromCloud = (cloudSettings) => {
-    if (!cloudSettings) return;
-    const merged = mergeSettings(cloudSettings);
-    setSettings(merged);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(merged));
-    } catch (e) {}
+  const updateSettings = (newValues) => {
+    setSettings((prev) => {
+      const updated = { ...prev, ...newValues };
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(updated));
+      } catch (e) {}
+      if (uid) {
+        saveUserDocToCloud(uid, { byokSettings: updated });
+      }
+      return updated;
+    });
   };
 
-  const saveSettings = (newSettings) => {
-    const merged = mergeSettings(newSettings);
-    setSettings(merged);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(merged));
-    } catch (e) {
-      console.error('Falha ao salvar no localStorage:', e);
-    }
-    if (uid) {
-      saveUserDocToCloud(uid, { byokSettings: merged });
-    }
+  const hydrateByokFromCloud = (cloudSettings) => {
+    if (!cloudSettings || typeof cloudSettings !== 'object') return;
+    setSettings((prev) => {
+      const merged = { ...DEFAULT_SETTINGS, ...prev, ...cloudSettings };
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(merged));
+      } catch (e) {}
+      return merged;
+    });
   };
 
-  const hasKey = (provider = settings.activeProvider) => {
-    return Boolean(settings[provider]?.apiKey?.trim());
-  };
-
-  const getActiveConfig = () => {
-    const provider = settings.activeProvider;
-    return {
-      provider,
-      ...settings[provider],
-      isReady: hasKey(provider),
-    };
-  };
+  const activeModel =
+    settings.model === 'custom' && settings.customModel?.trim()
+      ? settings.customModel.trim()
+      : settings.model;
 
   return {
     settings,
-    saveSettings,
-    hydrateSettingsFromCloud,
-    hasKey,
-    getActiveConfig,
-    activeProvider: settings.activeProvider,
+    updateSettings,
+    hydrateByokFromCloud,
+    activeModel,
+    isConfigured: Boolean(settings.apiKey && settings.apiKey.trim().length > 5),
   };
 }

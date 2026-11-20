@@ -1,53 +1,58 @@
 import { useState, useRef, useEffect } from 'react';
-import { 
-  Key, 
-  Settings, 
-  Sparkles, 
-  Swords, 
-  Compass, 
-  Database, 
-  BookOpen, 
-  PlusCircle, 
-  Send, 
-  X, 
-  Loader2, 
-  AlertCircle, 
-  Trash2, 
-  User, 
-  ArrowLeft, 
-  Globe, 
-  MessageSquare, 
-  Search, 
-  Plus, 
-  Dices, 
-  Heart, 
-  Activity, 
+import {
+  Key,
+  Settings,
+  Sparkles,
+  Swords,
+  Database,
+  BookOpen,
+  PlusCircle,
+  Send,
+  X,
+  Loader2,
+  AlertCircle,
+  Trash2,
+  User,
+  ArrowLeft,
+  MessageSquare,
+  Search,
+  Plus,
+  Dices,
+  Heart,
+  Activity,
   ScrollText,
   Cloud,
   CloudOff,
   RotateCw,
-  LogOut
+  LogOut,
+  Shield,
+  Crown,
 } from 'lucide-react';
 import { useBYOK } from './hooks/useBYOK';
 import { useProfiles } from './hooks/useProfiles';
+import { useCodex } from './hooks/useCodex';
 import { useCharacterSheet } from './hooks/useCharacterSheet';
 import BYOKModal from './components/BYOKModal';
 import SanguessugaModal from './components/SanguessugaModal';
+import CodexModal from './components/CodexModal';
 import PbtaRollModal from './components/PbtaRollModal';
 import DungeonPaperModal from './components/DungeonPaperModal';
 import LoginScreen from './components/LoginScreen';
 import { callLLM } from './services/llmService';
 import { buildSystemPrompt } from './engine/promptBuilder';
 import { parseAssistantResponse } from './engine/stateParser';
-import { fishRelevantVaultBoxes } from './engine/vaultFisher';
+import { fishRelevantLore, fishRelevantCodex } from './engine/vaultFisher';
 import { compressMessagesIntoChronicle } from './engine/chronicleCompressor';
-import { 
-  subscribeToAuth, 
-  logoutUser, 
-  loadUserDocFromCloud, 
-  loadProfilesFromCloud, 
-  loadAllChatsFromCloud, 
-  saveChatSessionToCloud 
+import {
+  subscribeToAuth,
+  logoutUser,
+  loadUserDocFromCloud,
+  loadCharactersFromCloud,
+  loadCampaignsFromCloud,
+  loadCodexFromCloud,
+  loadAllChatsFromCloud,
+  saveChatSessionToCloud,
+  saveEntityToCloud,
 } from './services/firebase';
 
 function AvatarDisplay({ avatar, className = 'text-base' }) {
@@ -77,42 +82,65 @@ export default function App() {
 
   const uid = user?.uid || null;
 
-  const { settings, saveSettings, hydrateSettingsFromCloud, getActiveConfig } = useBYOK(uid);
-  const { 
-    profiles, 
-    activeProfile, 
-    setActiveProfileId, 
-    addProfile, 
+  const {
+    settings,
+    updateSettings,
+    hydrateByokFromCloud,
+    activeModel,
+    isConfigured,
+  } = useBYOK(uid);
+
+  const {
+    characters,
+    campaigns,
+    activeProfile,
+    setActiveProfileId,
+    addProfile,
     deleteProfile,
     userPersona,
     saveUserPersona,
-    hydrateFromCloud
+    hydrateFromCloud,
   } = useProfiles(uid);
 
-  const { 
-    sheet, 
+  const {
+    codex,
+    addCodexEntry,
+    deleteCodexEntry,
+    hydrateCodexFromCloud,
+  } = useCodex(uid);
+
+  const {
+    sheet,
     saveSheet,
     hydrateSheetFromCloud,
-    updateHp, 
+    updateHp,
     updateStatScore,
     changeClass,
     addBond,
     removeBond,
     addItem,
-    removeItem
+    removeItem,
   } = useCharacterSheet(uid);
 
   const [currentScreen, setCurrentScreen] = useState('feed');
+  const [feedTab, setFeedTab] = useState('chat'); // 'chat' | 'rpg'
   const [searchFilter, setSearchFilter] = useState('');
 
   const [isBYOKOpen, setIsBYOKOpen] = useState(false);
   const [isSanguessugaOpen, setIsSanguessugaOpen] = useState(false);
+  const [sanguessugaInitialType, setSanguessugaInitialType] = useState('chat');
+  const [isCodexOpen, setIsCodexOpen] = useState(false);
   const [isPbtaRollOpen, setIsPbtaRollOpen] = useState(false);
   const [isDungeonPaperOpen, setIsDungeonPaperOpen] = useState(false);
+  const [isPersonaOpen, setIsPersonaOpen] = useState(false);
+  const [personaDraft, setPersonaDraft] = useState(userPersona);
+
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const [rightDrawerTab, setRightDrawerTab] = useState('vault');
 
-  const [currentMode, setCurrentMode] = useState('freeroam');
+  // Interruptor Realista (false = padrão) vs Modo Deus (true)
+  const [godMode, setGodMode] = useState(false);
+
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
@@ -120,6 +148,9 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState('');
 
   const [activeFishedTags, setActiveFishedTags] = useState([]);
+  const [activeCodexItems, setActiveCodexItems] = useState([]);
+  const [pinnedByEntity, setPinnedByEntity] = useState({});
+
   const [isAddingVaultBox, setIsAddingVaultBox] = useState(false);
   const [newVaultTag, setNewVaultTag] = useState('');
   const [newVaultContent, setNewVaultContent] = useState('');
@@ -132,7 +163,7 @@ export default function App() {
   const [vaults, setVaults] = useState({});
   const [chronicles, setChronicles] = useState({});
 
-  // Carrega dados locais e sincroniza da nuvem assim que o usuário faz login
+  // Carrega dados locais e sincroniza da nuvem ao logar
   useEffect(() => {
     if (!uid) {
       setChatHistories({});
@@ -155,21 +186,25 @@ export default function App() {
     async function restoreFromCloud() {
       setCloudSyncStatus('syncing');
       try {
-        const [userDoc, cloudProfiles, cloudChats] = await Promise.all([
-          loadUserDocFromCloud(uid),
-          loadProfilesFromCloud(uid),
-          loadAllChatsFromCloud(uid),
-        ]);
+        const [userDoc, cloudChars, cloudCamps, cloudCodex, cloudChats] =
+          await Promise.all([
+            loadUserDocFromCloud(uid),
+            loadCharactersFromCloud(uid),
+            loadCampaignsFromCloud(uid),
+            loadCodexFromCloud(uid),
+            loadAllChatsFromCloud(uid),
+          ]);
 
         if (!isMounted) return;
 
         if (userDoc?.byokSettings) {
-          hydrateSettingsFromCloud(userDoc.byokSettings);
+          hydrateByokFromCloud(userDoc.byokSettings);
         }
         if (userDoc?.dungeonPaperSheet) {
           hydrateSheetFromCloud(userDoc.dungeonPaperSheet);
         }
-        hydrateFromCloud(cloudProfiles, userDoc?.userPersona);
+        hydrateFromCloud(cloudChars, cloudCamps, userDoc?.userPersona);
+        hydrateCodexFromCloud(cloudCodex);
 
         if (cloudChats && Object.keys(cloudChats).length > 0) {
           const nextChats = {};
@@ -205,11 +240,31 @@ export default function App() {
     }
 
     restoreFromCloud();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [uid]);
 
   const messagesEndRef = useRef(null);
-  const activeConfig = getActiveConfig();
+
+  const primaryByokConfig = {
+    provider: settings.provider,
+    apiKey: settings.apiKey,
+    model: activeModel,
+    temperature: settings.temperature ?? 0.85,
+    isReady: isConfigured,
+  };
+
+  const chronicleByokConfig =
+    settings.chronicleEnabled && settings.chronicleApiKey?.trim()
+      ? {
+          provider: settings.chronicleProvider,
+          apiKey: settings.chronicleApiKey,
+          model: settings.chronicleModel,
+          temperature: 0.3,
+          isReady: true,
+        }
+      : primaryByokConfig;
 
   useEffect(() => {
     if (currentScreen === 'chat' && user) {
@@ -217,7 +272,6 @@ export default function App() {
     }
   }, [chatHistories, isLoading, currentScreen, user]);
 
-  // Tela de carregamento inicial da sessão
   if (authLoading) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center gap-3">
@@ -227,10 +281,11 @@ export default function App() {
     );
   }
 
-  // Bloqueia acesso até o usuário entrar com Google
   if (!user) {
     return <LoginScreen />;
   }
+
+  const isRpgSession = activeProfile?.type === 'rpg';
 
   const currentMessages = chatHistories[activeProfile.id] || [
     { role: 'assistant', content: activeProfile.firstMessage },
@@ -238,11 +293,37 @@ export default function App() {
 
   const currentVault = vaults[activeProfile.id] || activeProfile.initialVault || [];
   const currentChronicle = chronicles[activeProfile.id] || '';
+  const currentPinnedIds =
+    pinnedByEntity[activeProfile.id] ?? activeProfile.pinnedCodexIds ?? [];
+
+  const handleToggleCodexPin = (codexId) => {
+    const nextPinned = currentPinnedIds.includes(codexId)
+      ? currentPinnedIds.filter((id) => id !== codexId)
+      : [...currentPinnedIds, codexId];
+
+    setPinnedByEntity((prev) => ({
+      ...prev,
+      [activeProfile.id]: nextPinned,
+    }));
+
+    if (uid) {
+      saveEntityToCloud(uid, {
+        ...activeProfile,
+        pinnedCodexIds: nextPinned,
+      });
+    }
+  };
 
   const triggerCloudSync = async (msgs, vault, chronicle) => {
     if (!uid) return;
     setCloudSyncStatus('syncing');
-    const ok = await saveChatSessionToCloud(uid, activeProfile.id, msgs, vault, chronicle);
+    const ok = await saveChatSessionToCloud(
+      uid,
+      activeProfile.id,
+      msgs,
+      vault,
+      chronicle
+    );
     setCloudSyncStatus(ok ? 'saved' : 'error');
   };
 
@@ -281,7 +362,13 @@ export default function App() {
 
   const handleOpenChat = (profileId) => {
     setActiveProfileId(profileId);
+    setRightDrawerTab('vault');
     setCurrentScreen('chat');
+  };
+
+  const openCreatorModal = (targetType) => {
+    setSanguessugaInitialType(targetType);
+    setIsSanguessugaOpen(true);
   };
 
   const handleLogout = async () => {
@@ -293,8 +380,13 @@ export default function App() {
   const handleManualAddVaultBox = (e) => {
     e.preventDefault();
     if (!newVaultTag.trim() || !newVaultContent.trim()) return;
-    const formattedTag = newVaultTag.startsWith('#') ? newVaultTag.trim() : `#${newVaultTag.trim()}`;
-    const nextVault = [{ tag: formattedTag, content: newVaultContent.trim() }, ...currentVault];
+    const formattedTag = newVaultTag.startsWith('#')
+      ? newVaultTag.trim()
+      : `#${newVaultTag.trim()}`;
+    const nextVault = [
+      { tag: formattedTag, content: newVaultContent.trim() },
+      ...currentVault,
+    ];
     updateCurrentVault(nextVault);
     setNewVaultTag('');
     setNewVaultContent('');
@@ -306,25 +398,30 @@ export default function App() {
     updateCurrentVault(nextVault);
   };
 
-  const handleCompressChronicle = async () => {
-    if (currentMessages.length <= 4 || isCompressing) return;
+  const runChronicleCompression = async (msgsSnapshot, silent = false) => {
+    if (msgsSnapshot.length <= 8 || isCompressing) return msgsSnapshot;
     setIsCompressing(true);
 
     try {
-      const turnsToCompress = currentMessages.slice(1, -4);
-      const remainingMessages = [currentMessages[0], ...currentMessages.slice(-4)];
+      // Compacta os turnos mais antigos mantendo a abertura + os 6 turnos mais recentes
+      const turnsToCompress = msgsSnapshot.slice(1, -6);
+      const remainingMessages = [msgsSnapshot[0], ...msgsSnapshot.slice(-6)];
 
       const newChronicle = await compressMessagesIntoChronicle({
         oldMessages: turnsToCompress,
         existingChronicle: currentChronicle,
-        byokConfig: activeConfig,
+        byokConfig: chronicleByokConfig,
       });
 
       updateCurrentChronicle(newChronicle);
       updateCurrentMessages(remainingMessages);
-      alert('The Chronicle atualizado! Turnos antigos foram sintetizados com sucesso.');
+      if (!silent) {
+        alert('The Chronicle atualizado! Turnos antigos sintetizados.');
+      }
+      return remainingMessages;
     } catch (err) {
       console.warn('Erro ao comprimir Chronicle:', err);
+      return msgsSnapshot;
     } finally {
       setIsCompressing(false);
     }
@@ -333,7 +430,7 @@ export default function App() {
   const executeSendMessage = async (textToSend, mechanicalInjection = '') => {
     if (!textToSend.trim() || isLoading) return;
 
-    if (!activeConfig.isReady) {
+    if (!primaryByokConfig.isReady) {
       setIsBYOKOpen(true);
       return;
     }
@@ -342,54 +439,73 @@ export default function App() {
     const userText = textToSend.trim();
     setInputMessage('');
 
-    const updatedMessages = [...currentMessages, { role: 'user', content: userText }];
+    const updatedMessages = [
+      ...currentMessages,
+      { role: 'user', content: userText },
+    ];
     updateCurrentMessages(updatedMessages);
     setIsLoading(true);
 
     try {
-      const { activeBoxes, activeTags } = fishRelevantVaultBoxes({
-        userMessage: userText,
-        recentMessages: updatedMessages,
-        vault: currentVault,
-        maxBoxes: 6,
-      });
+      // Junta texto recente para o Pescador RAG encontrar NPCs, Locais e Regras citados
+      const recentContextText = updatedMessages
+        .slice(-4)
+        .map((m) => m.content)
+        .join(' ');
 
-      setActiveFishedTags(activeTags);
+      const activeBoxes = fishRelevantLore(currentVault, recentContextText, 8);
+      const fishedCodex = fishRelevantCodex(
+        codex,
+        recentContextText,
+        currentPinnedIds,
+        15
+      );
+
+      setActiveFishedTags(activeBoxes.map((b) => b.tag));
+      setActiveCodexItems(fishedCodex);
 
       const systemPrompt = buildSystemPrompt({
-        mode: currentMode,
+        entityType: activeProfile.type || 'chat',
         characterName: activeProfile.name,
         personality: activeProfile.personality,
         scenario: activeProfile.scenario,
-        firstMessage: activeProfile.firstMessage,
         vaultContext: activeBoxes,
+        codexContext: fishedCodex,
         chronicle: currentChronicle,
         userPersona: userPersona,
-        characterSheet: currentMode === 'hardcore' ? sheet : null,
+        characterSheet: isRpgSession ? sheet : null,
+        godMode,
       });
 
-      const recentBuffer = updatedMessages.slice(-10);
+      // Buffer econômico: últimos 8 turnos
+      const recentBuffer = updatedMessages.slice(-8);
 
       const messagesForLLM = mechanicalInjection
         ? [
             ...recentBuffer.slice(0, -1),
-            { role: 'user', content: `${userText}\n\n${mechanicalInjection}` }
+            { role: 'user', content: `${userText}\n\n${mechanicalInjection}` },
           ]
         : recentBuffer;
 
       const rawResponse = await callLLM({
         messages: messagesForLLM,
         systemPrompt,
-        byokConfig: activeConfig,
+        byokConfig: primaryByokConfig,
       });
 
       const { cleanText, stateUpdate } = parseAssistantResponse(rawResponse);
-      updateCurrentMessages([...updatedMessages, { role: 'assistant', content: cleanText }]);
+      const finalMessages = [
+        ...updatedMessages,
+        { role: 'assistant', content: cleanText },
+      ];
+      updateCurrentMessages(finalMessages);
 
       if (stateUpdate?.vault_updates && Array.isArray(stateUpdate.vault_updates)) {
         const nextVault = [...currentVault];
         stateUpdate.vault_updates.forEach((update) => {
-          const idx = nextVault.findIndex((b) => b.tag.toLowerCase() === update.tag?.toLowerCase());
+          const idx = nextVault.findIndex(
+            (b) => b.tag.toLowerCase() === update.tag?.toLowerCase()
+          );
           if (idx >= 0) {
             nextVault[idx] = update;
           } else if (update.tag && update.content) {
@@ -397,6 +513,11 @@ export default function App() {
           }
         });
         updateCurrentVault(nextVault);
+      }
+
+      // Disparo automático do Cronista quando passa de 12 mensagens
+      if (finalMessages.length > 12) {
+        runChronicleCompression(finalMessages, true);
       }
     } catch (err) {
       console.error('Erro na chamada da LLM:', err);
@@ -412,20 +533,23 @@ export default function App() {
   };
 
   const handlePbtaRollConfirmed = (rollData) => {
-    const userActionMsg = `🎲 **[Movimento: ${rollData.tierName}]** ${inputMessage.trim() || 'Ajo decisivamente segundo o movimento.'}`;
+    const userActionMsg = `🎲 **[Movimento: ${rollData.tierName}]** ${
+      inputMessage.trim() || 'Ajo decisivamente segundo o movimento.'
+    }`;
     executeSendMessage(userActionMsg, rollData.promptInjection);
   };
 
-  const filteredProfiles = profiles.filter((p) =>
-    p.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
-    (p.tag || '').toLowerCase().includes(searchFilter.toLowerCase())
+  const currentList = feedTab === 'rpg' ? campaigns : characters;
+  const filteredList = currentList.filter(
+    (p) =>
+      p.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
+      (p.tag || '').toLowerCase().includes(searchFilter.toLowerCase())
   );
 
   return (
     <div className="flex h-screen w-full bg-zinc-950 text-zinc-100 font-sans overflow-hidden select-none">
-      
       {/* ============================================================== */}
-      {/* TELA 1: FEED / HUB INICIAL DE MUNDOS E BOTS                    */}
+      {/* TELA 1: FEED / DOIS MUNDOS SEPARADOS + BIBLIOTECA              */}
       {/* ============================================================== */}
       {currentScreen === 'feed' && (
         <div className="flex-1 flex flex-col h-full w-full bg-zinc-950 overflow-y-auto">
@@ -434,26 +558,44 @@ export default function App() {
               <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-xs">
                 AI
               </div>
-              <h1 className="font-extrabold text-sm tracking-wide text-zinc-100">AIRPG</h1>
+              <h1 className="font-extrabold text-sm tracking-wide text-zinc-100">
+                AIRPG
+              </h1>
             </div>
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsSanguessugaOpen(true)}
+                onClick={() => setIsCodexOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-amber-300 hover:border-amber-500/40"
+                title="Biblioteca Compartilhada de NPCs, Locais e Regras"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline font-medium">
+                  Biblioteca ({codex.length})
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setPersonaDraft(userPersona);
+                  setIsPersonaOpen(true);
+                }}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:border-zinc-700"
-                title="Editar sua Persona no RPG"
+                title="Editar sua Persona"
               >
                 <User className="w-3.5 h-3.5 text-amber-400" />
-                <span className="font-medium max-w-[80px] truncate">{userPersona.name}</span>
+                <span className="font-medium max-w-[80px] truncate">
+                  {userPersona.name}
+                </span>
               </button>
 
               <button
                 onClick={() => setIsBYOKOpen(true)}
                 className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-700 relative"
-                title="Configurar chaves"
+                title="Configurar chaves BYOK"
               >
                 <Key className="w-4 h-4 text-amber-400" />
-                {!activeConfig.isReady && (
+                {!primaryByokConfig.isReady && (
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                 )}
               </button>
@@ -464,7 +606,11 @@ export default function App() {
                 title={`Conectado como ${user.email} — Clique para sair`}
               >
                 {user.photoURL ? (
-                  <img src={user.photoURL} alt="" className="w-5 h-5 rounded-full" />
+                  <img
+                    src={user.photoURL}
+                    alt=""
+                    className="w-5 h-5 rounded-full"
+                  />
                 ) : (
                   <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-bold">
                     {user.email?.[0]?.toUpperCase() || 'G'}
@@ -476,13 +622,17 @@ export default function App() {
           </header>
 
           <main className="p-4 space-y-5 max-w-3xl mx-auto w-full pb-10">
-            {!activeConfig.isReady && (
+            {!primaryByokConfig.isReady && (
               <div className="bg-amber-950/40 border border-amber-600/50 rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-lg">
                 <div className="flex items-center gap-2.5">
                   <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-amber-200">Chave de IA Pendente</p>
-                    <p className="text-[11px] text-amber-400/80">Insira uma chave gratuita no BYOK para começar.</p>
+                    <p className="text-xs font-bold text-amber-200">
+                      Chave de IA Pendente
+                    </p>
+                    <p className="text-[11px] text-amber-400/80">
+                      Configure uma chave gratuita (OpenRouter, Groq ou Gemini) no BYOK.
+                    </p>
                   </div>
                 </div>
                 <button
@@ -494,42 +644,92 @@ export default function App() {
               </div>
             )}
 
-            {/* Hero Card */}
-            <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900 via-zinc-900/60 to-zinc-950 p-5 shadow-xl">
-              <div className="relative z-10 space-y-2">
-                <span className="inline-block text-[10px] font-bold tracking-wider text-amber-400 uppercase bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 rounded">
-                  Dual-Mode Engine • PbtA & Freeroam
+            {/* Seletor de Dois Mundos Separados */}
+            <div className="grid grid-cols-2 gap-2.5 bg-zinc-900/70 p-1.5 rounded-2xl border border-zinc-800">
+              <button
+                onClick={() => setFeedTab('chat')}
+                className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  feedTab === 'chat'
+                    ? 'bg-amber-500 text-zinc-950 shadow-lg shadow-amber-500/20'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Conversas Livres ({characters.length})</span>
+              </button>
+
+              <button
+                onClick={() => setFeedTab('rpg')}
+                className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                  feedTab === 'rpg'
+                    ? 'bg-emerald-400 text-zinc-950 shadow-lg shadow-emerald-500/20'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <Swords className="w-4 h-4" />
+                <span>Campanhas RPG ({campaigns.length})</span>
+              </button>
+            </div>
+
+            {/* Banner Contextual do Modo Selecionado */}
+            <div className="rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900 via-zinc-900/60 to-zinc-950 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <span
+                  className={`inline-block text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded border ${
+                    feedTab === 'rpg'
+                      ? 'text-emerald-300 bg-emerald-950/60 border-emerald-800/40'
+                      : 'text-amber-400 bg-amber-950/60 border-amber-800/40'
+                  }`}
+                >
+                  {feedTab === 'rpg'
+                    ? 'Mestre PbtA • Ficha & Dados 2d6'
+                    : 'Freeroam Narrativo • Sem Ficha'}
                 </span>
-                <h2 className="text-base font-bold text-zinc-100">
-                  Crie mundos inteiros ou importe cenas curtas
+                <h2 className="text-sm sm:text-base font-bold text-zinc-100">
+                  {feedTab === 'rpg'
+                    ? 'Campanhas onde os dados e a ficha são a lei'
+                    : 'Mundos vivos e personagens com vontade própria'}
                 </h2>
                 <p className="text-xs text-zinc-400 leading-relaxed">
-                  Converse com o <strong>Arquiteto de Mundos</strong> para tecer lore e NPCs para o Vault, ou use a <strong>Sanguessuga</strong> para puxar cards da web.
+                  {feedTab === 'rpg'
+                    ? 'Inclui Ficha Dungeon Paper, PV e rolagem 2d6 conectada à Biblioteca de NPCs e Locais.'
+                    : 'Roleplay livre com múltiplos NPCs, locais e regras de mundo puxados sob demanda.'}
                 </p>
+              </div>
 
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <button
-                    onClick={() => setIsSanguessugaOpen(true)}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs rounded-xl transition shadow-lg shadow-amber-500/20"
-                  >
-                    <Globe className="w-4 h-4" />
-                    <span>Criar com o Arquiteto</span>
-                  </button>
-                  <button
-                    onClick={() => setIsSanguessugaOpen(true)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs rounded-xl border border-zinc-700 transition"
-                  >
-                    <PlusCircle className="w-4 h-4 text-amber-400" />
-                    <span>Importar Sanguessuga</span>
-                  </button>
-                </div>
+              <div className="flex flex-wrap sm:flex-col gap-2 shrink-0">
+                <button
+                  onClick={() => openCreatorModal(feedTab)}
+                  className={`flex items-center justify-center gap-1.5 px-4 py-2.5 font-bold text-xs rounded-xl transition shadow-lg ${
+                    feedTab === 'rpg'
+                      ? 'bg-emerald-400 hover:bg-emerald-300 text-zinc-950 shadow-emerald-500/20'
+                      : 'bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-amber-500/20'
+                  }`}
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>
+                    {feedTab === 'rpg'
+                      ? '+ Nova Campanha RPG'
+                      : '+ Nova Conversa Livre'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setIsCodexOpen(true)}
+                  className="flex items-center justify-center gap-1.5 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs rounded-xl border border-zinc-700 transition"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                  <span>NPCs & Locais ({codex.length})</span>
+                </button>
               </div>
             </div>
 
             {/* Busca */}
-            <div className="flex items-center justify-between gap-2 pt-2">
+            <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                Seus Mundos & Personagens ({profiles.length})
+                {feedTab === 'rpg'
+                  ? `Suas Campanhas (${filteredList.length})`
+                  : `Suas Conversas (${filteredList.length})`}
               </h3>
               <div className="relative w-44">
                 <input
@@ -545,7 +745,7 @@ export default function App() {
 
             {/* Grid de Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {filteredProfiles.map((p) => {
+              {filteredList.map((p) => {
                 const vaultCount = (vaults[p.id] || p.initialVault || []).length;
                 const msgsCount = (chatHistories[p.id] || []).length;
 
@@ -553,7 +753,11 @@ export default function App() {
                   <div
                     key={p.id}
                     onClick={() => handleOpenChat(p.id)}
-                    className="group relative cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 hover:border-amber-500/50 p-4 transition-all duration-200 flex flex-col justify-between space-y-3 shadow-md"
+                    className={`group relative cursor-pointer rounded-xl border bg-zinc-900/60 hover:bg-zinc-900 p-4 transition-all duration-200 flex flex-col justify-between space-y-3 shadow-md ${
+                      feedTab === 'rpg'
+                        ? 'border-zinc-800 hover:border-emerald-500/50'
+                        : 'border-zinc-800 hover:border-amber-500/50'
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3">
@@ -561,25 +765,31 @@ export default function App() {
                           <AvatarDisplay avatar={p.avatar} className="text-2xl" />
                         </div>
                         <div>
-                          <h4 className="font-bold text-xs text-zinc-100 group-hover:text-amber-400 transition">
+                          <h4
+                            className={`font-bold text-xs text-zinc-100 transition ${
+                              feedTab === 'rpg'
+                                ? 'group-hover:text-emerald-300'
+                                : 'group-hover:text-amber-400'
+                            }`}
+                          >
                             {p.name}
                           </h4>
                           <span className="inline-block mt-0.5 text-[9px] font-semibold text-zinc-400 bg-zinc-950/70 border border-zinc-800 px-1.5 py-0.2 rounded">
-                            {p.tag || 'Custom'}
+                            {p.tag || (feedTab === 'rpg' ? 'PbtA' : 'Freeroam')}
                           </span>
                         </div>
                       </div>
 
-                      {profiles.length > 1 && (
+                      {currentList.length > 1 && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm(`Excluir perfil "${p.name}"?`)) {
-                              deleteProfile(p.id);
+                            if (confirm(`Excluir "${p.name}"?`)) {
+                              deleteProfile(p.id, p.type);
                             }
                           }}
                           className="opacity-40 hover:opacity-100 p-1 text-zinc-500 hover:text-rose-400 transition"
-                          title="Excluir mundo"
+                          title="Excluir"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -593,7 +803,8 @@ export default function App() {
                     <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[10px] text-zinc-500">
                       <div className="flex items-center gap-2">
                         <span className="flex items-center gap-1">
-                          <Database className="w-3 h-3 text-amber-500" /> {vaultCount} lore
+                          <Database className="w-3 h-3 text-amber-500" />{' '}
+                          {vaultCount} fatos
                         </span>
                         {msgsCount > 1 && (
                           <span className="flex items-center gap-1 text-zinc-400">
@@ -601,8 +812,14 @@ export default function App() {
                           </span>
                         )}
                       </div>
-                      <span className="text-amber-400 font-semibold group-hover:translate-x-0.5 transition flex items-center gap-0.5">
-                        Jogar →
+                      <span
+                        className={`font-semibold group-hover:translate-x-0.5 transition flex items-center gap-0.5 ${
+                          feedTab === 'rpg'
+                            ? 'text-emerald-400'
+                            : 'text-amber-400'
+                        }`}
+                      >
+                        {feedTab === 'rpg' ? 'Jogar Campanha →' : 'Conversar →'}
                       </span>
                     </div>
                   </div>
@@ -614,7 +831,7 @@ export default function App() {
       )}
 
       {/* ============================================================== */}
-      {/* TELA 2: TELA DE CHAT ATIVO COM O MUNDO/BOT                     */}
+      {/* TELA 2: CHAT ATIVO (INTERFACE ADAPTADA POR MODO + GOD MODE)    */}
       {/* ============================================================== */}
       {currentScreen === 'chat' && (
         <main className="flex-1 flex flex-col h-full w-full bg-zinc-950 relative">
@@ -623,20 +840,33 @@ export default function App() {
               <button
                 onClick={() => setCurrentScreen('feed')}
                 className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-                title="Voltar ao Feed de Mundos"
+                title="Voltar ao início"
               >
                 <ArrowLeft className="w-5 h-5 text-amber-400" />
               </button>
               <div className="flex items-center gap-2 truncate">
                 <div className="w-7 h-7 shrink-0 flex items-center justify-center overflow-hidden rounded-lg">
-                  <AvatarDisplay avatar={activeProfile.avatar} className="text-lg" />
+                  <AvatarDisplay
+                    avatar={activeProfile.avatar}
+                    className="text-lg"
+                  />
                 </div>
                 <div className="truncate">
-                  <h2 className="font-bold text-xs text-zinc-100 truncate">{activeProfile.name}</h2>
+                  <h2 className="font-bold text-xs text-zinc-100 truncate">
+                    {activeProfile.name}
+                  </h2>
                   <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${isLoading ? 'bg-amber-400 animate-ping' : 'bg-emerald-500'}`} />
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isLoading ? 'bg-amber-400 animate-ping' : 'bg-emerald-500'
+                      }`}
+                    />
                     <span className="text-[9px] text-zinc-400 uppercase tracking-wider truncate">
-                      {isLoading ? 'pensando...' : currentMode === 'hardcore' ? `${sheet.className} (PbtA)` : 'Freeroam'}
+                      {isLoading
+                        ? 'pensando...'
+                        : isRpgSession
+                        ? `${sheet.className} • Campanha PbtA`
+                        : 'Freeroam Narrativo'}
                     </span>
                   </div>
                 </div>
@@ -644,45 +874,64 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {currentMode === 'hardcore' && (
+              {/* PV apenas em Campanhas RPG */}
+              {isRpgSession && (
                 <button
                   onClick={() => setIsDungeonPaperOpen(true)}
                   className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/80 rounded-lg text-rose-300 text-[11px] font-bold flex items-center gap-1 transition"
                   title="Abrir Ficha Dungeon Paper"
                 >
                   <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
-                  <span>{sheet.hp}/{sheet.maxHp}</span>
+                  <span>
+                    {sheet.hp}/{sheet.maxHp}
+                  </span>
                 </button>
               )}
 
+              {/* Interruptor Realista (Padrão) vs Modo Deus */}
               <button
-                onClick={() => setCurrentMode(currentMode === 'freeroam' ? 'hardcore' : 'freeroam')}
-                className={`p-1.5 px-2 rounded-lg border text-[11px] font-semibold flex items-center gap-1 transition ${
-                  currentMode === 'hardcore'
-                    ? 'bg-rose-950/50 border-rose-800/80 text-rose-300'
-                    : 'bg-amber-950/50 border-amber-800/80 text-amber-300'
+                onClick={() => setGodMode((prev) => !prev)}
+                className={`p-1.5 px-2.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1 transition ${
+                  godMode
+                    ? 'bg-purple-950/60 border-purple-600/70 text-purple-300'
+                    : 'bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-zinc-600'
                 }`}
+                title={
+                  godMode
+                    ? 'Modo Deus Ativo: suas declarações têm poder absoluto'
+                    : 'Modo Realista Ativo: NPCs têm vontade própria e os dados/regras mandam'
+                }
               >
-                {currentMode === 'hardcore' ? (
+                {godMode ? (
                   <>
-                    <Swords className="w-3.5 h-3.5 text-rose-400" />
-                    <span>PbtA</span>
+                    <Crown className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Modo Deus</span>
                   </>
                 ) : (
                   <>
-                    <Compass className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Free</span>
+                    <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Realista</span>
                   </>
                 )}
               </button>
 
+              {/* Atalho Biblioteca (Codex) */}
+              <button
+                onClick={() => setIsCodexOpen(true)}
+                className="p-2 rounded-lg text-zinc-400 hover:text-amber-300 hover:bg-zinc-800"
+                title="Abrir Biblioteca de NPCs, Locais e Regras"
+              >
+                <BookOpen className="w-4 h-4" />
+              </button>
+
+              {/* Gaveta Vault / Crônica (e Ficha se for RPG) */}
               <button
                 onClick={() => setRightDrawerOpen(true)}
                 className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 relative"
-                title="Abrir The Vault, Ficha e Crônica"
+                title="Abrir Memória (Vault & Crônica)"
               >
-                {currentMode === 'hardcore' ? (
-                  <Activity className="w-4 h-4 text-rose-400" />
+                {isRpgSession ? (
+                  <Activity className="w-4 h-4 text-emerald-400" />
                 ) : (
                   <Database className="w-4 h-4 text-amber-400" />
                 )}
@@ -697,7 +946,7 @@ export default function App() {
                 title="Configurar chaves"
               >
                 <Settings className="w-4 h-4 text-zinc-300" />
-                {!activeConfig.isReady && (
+                {!primaryByokConfig.isReady && (
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                 )}
               </button>
@@ -705,12 +954,12 @@ export default function App() {
           </header>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {!activeConfig.isReady && (
+            {!primaryByokConfig.isReady && (
               <div className="bg-amber-950/40 border border-amber-600/40 rounded-xl p-3 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2.5 truncate">
                   <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
                   <p className="text-[11px] text-amber-200 truncate">
-                    Configurar chave de IA ({activeConfig.provider.toUpperCase()})
+                    Configurar chave de IA ({primaryByokConfig.provider.toUpperCase()})
                   </p>
                 </div>
                 <button
@@ -726,8 +975,12 @@ export default function App() {
               <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-3 flex items-start gap-2.5 text-xs text-zinc-400">
                 <ScrollText className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">The Chronicle (Passado Comprimido):</span>
-                  <p className="text-[11px] text-zinc-300 line-clamp-2 italic">{currentChronicle}</p>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                    The Chronicle (Passado Comprimido):
+                  </span>
+                  <p className="text-[11px] text-zinc-300 line-clamp-2 italic">
+                    {currentChronicle}
+                  </p>
                 </div>
               </div>
             )}
@@ -756,13 +1009,23 @@ export default function App() {
                       : 'bg-zinc-800 border-zinc-700 text-base'
                   }`}
                 >
-                  {msg.role === 'user' ? '👤' : <AvatarDisplay avatar={activeProfile.avatar} />}
+                  {msg.role === 'user' ? (
+                    '👤'
+                  ) : (
+                    <AvatarDisplay avatar={activeProfile.avatar} />
+                  )}
                 </div>
 
-                <div className={`space-y-1 max-w-[85%] ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
+                <div
+                  className={`space-y-1 max-w-[85%] ${
+                    msg.role === 'user' ? 'text-right' : 'text-left'
+                  }`}
+                >
                   <div className="flex items-center gap-1.5 px-1">
                     <span className="font-semibold text-xs text-amber-400">
-                      {msg.role === 'user' ? userPersona.name : activeProfile.name.split(',')[0]}
+                      {msg.role === 'user'
+                        ? userPersona.name
+                        : activeProfile.name.split(',')[0]}
                     </span>
                   </div>
                   <div
@@ -785,7 +1048,11 @@ export default function App() {
                 </div>
                 <div className="bg-zinc-900 border border-zinc-800 rounded-2xl rounded-tl-none p-3.5 flex items-center gap-2 text-xs text-zinc-400">
                   <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                  <span>{activeProfile.name.split(',')[0]} está digitando...</span>
+                  <span>
+                    {isRpgSession
+                      ? 'O Mestre está narrando...'
+                      : `${activeProfile.name.split(',')[0]} está respondendo...`}
+                  </span>
                 </div>
               </div>
             )}
@@ -794,12 +1061,16 @@ export default function App() {
           </div>
 
           <div className="p-3 border-t border-zinc-800/80 bg-zinc-950 shrink-0">
-            <form onSubmit={handleSend} className="relative flex items-center gap-1.5">
-              {currentMode === 'hardcore' && (
+            <form
+              onSubmit={handleSend}
+              className="relative flex items-center gap-1.5"
+            >
+              {/* Botão 2d6 exclusivo para Campanhas RPG */}
+              {isRpgSession && (
                 <button
                   type="button"
                   onClick={() => setIsPbtaRollOpen(true)}
-                  className="p-2.5 bg-rose-600 hover:bg-rose-500 text-zinc-100 rounded-xl transition shadow-md shadow-rose-600/20 shrink-0"
+                  className="p-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-xl transition shadow-md shadow-emerald-600/20 shrink-0"
                   title="Rolar Movimento PbtA (2d6)"
                 >
                   <Dices className="w-4 h-4" />
@@ -815,8 +1086,8 @@ export default function App() {
                   placeholder={
                     isLoading
                       ? 'Aguardando resposta...'
-                      : currentMode === 'freeroam'
-                      ? `Fale como ${userPersona.name}...`
+                      : !isRpgSession
+                      ? `Fale ou aja como ${userPersona.name}...`
                       : 'Descreva sua ação ou toque no dado 🎲...'
                   }
                   className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-3 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 pr-12 transition shadow-inner disabled:opacity-50"
@@ -826,14 +1097,18 @@ export default function App() {
                   disabled={!inputMessage.trim() || isLoading}
                   className="absolute right-1.5 p-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-lg transition disabled:opacity-50"
                 >
-                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  {isLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
                 </button>
               </div>
             </form>
 
             <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-zinc-500">
               <span className="truncate flex items-center gap-1">
-                <span>{activeConfig.provider.toUpperCase()}</span>
+                <span>{primaryByokConfig.provider.toUpperCase()}</span>
                 <span>•</span>
                 {cloudSyncStatus === 'syncing' && (
                   <span className="flex items-center gap-1 text-[9px] text-amber-400">
@@ -846,13 +1121,25 @@ export default function App() {
                   </span>
                 )}
                 {cloudSyncStatus === 'error' && (
-                  <span className="flex items-center gap-1 text-[9px] text-rose-400" title="Salvo localmente; falha ao enviar ao Firebase">
-                    <CloudOff className="w-3 h-3 text-rose-500" /> Local (Offline)
+                  <span
+                    className="flex items-center gap-1 text-[9px] text-rose-400"
+                    title="Salvo localmente; falha ao enviar ao Firebase"
+                  >
+                    <CloudOff className="w-3 h-3 text-rose-500" /> Local
                   </span>
                 )}
               </span>
-              <span className={currentMode === 'hardcore' ? 'text-rose-400 font-bold' : 'text-amber-400 font-bold'}>
-                {currentMode === 'hardcore' ? 'PBTA / DUNGEON WORLD (2d6)' : 'FREEROAM NARRATIVO'}
+
+              <span
+                className={
+                  isRpgSession
+                    ? 'text-emerald-400 font-bold'
+                    : 'text-amber-400 font-bold'
+                }
+              >
+                {isRpgSession
+                  ? 'CAMPANHA RPG (2d6)'
+                  : 'CONVERSA LIVRE / FREEROAM'}
               </span>
             </div>
           </div>
@@ -860,10 +1147,10 @@ export default function App() {
       )}
 
       {/* ============================================================== */}
-      {/* GAVETA DIREITA: THE VAULT, FICHA PBTA & THE CHRONICLE          */}
+      {/* GAVETA DIREITA: VAULT, FICHA (SÓ NO RPG) & CRÔNICA             */}
       {/* ============================================================== */}
       {rightDrawerOpen && (
-        <div 
+        <div
           onClick={() => setRightDrawerOpen(false)}
           className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm transition-opacity"
         />
@@ -879,23 +1166,33 @@ export default function App() {
               <button
                 onClick={() => setRightDrawerTab('vault')}
                 className={`px-2 py-1 rounded text-xs font-bold transition ${
-                  rightDrawerTab === 'vault' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
+                  rightDrawerTab === 'vault'
+                    ? 'bg-amber-500 text-zinc-950'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 Vault
               </button>
-              <button
-                onClick={() => setRightDrawerTab('sheet')}
-                className={`px-2 py-1 rounded text-xs font-bold transition ${
-                  rightDrawerTab === 'sheet' ? 'bg-rose-500 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Ficha
-              </button>
+
+              {isRpgSession && (
+                <button
+                  onClick={() => setRightDrawerTab('sheet')}
+                  className={`px-2 py-1 rounded text-xs font-bold transition ${
+                    rightDrawerTab === 'sheet'
+                      ? 'bg-emerald-400 text-zinc-950'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Ficha
+                </button>
+              )}
+
               <button
                 onClick={() => setRightDrawerTab('chronicle')}
                 className={`px-2 py-1 rounded text-xs font-bold transition ${
-                  rightDrawerTab === 'chronicle' ? 'bg-amber-400 text-zinc-950' : 'text-zinc-400 hover:text-zinc-200'
+                  rightDrawerTab === 'chronicle'
+                    ? 'bg-amber-400 text-zinc-950'
+                    : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 Crônica
@@ -915,21 +1212,21 @@ export default function App() {
                 <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3 space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                      Pescador de Tags RAG
+                      Pescador RAG + Biblioteca
                     </span>
                     <span className="text-[9px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 rounded">
-                      Ativo
+                      {activeCodexItems.length} do Codex na cena
                     </span>
                   </div>
                   <p className="text-[10px] text-zinc-400 leading-relaxed">
-                    Injeta apenas o Lore relevante para a cena em cada turno, economizando tokens.
+                    Injeta apenas fatos do Vault e NPCs/Locais/Regras da Biblioteca relevantes na cena.
                   </p>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1">
-                    <BookOpen className="w-3.5 h-3.5 text-amber-400" />
-                    Caixas de Fatos ({currentVault.length})
+                    <Database className="w-3.5 h-3.5 text-amber-400" />
+                    Fatos desta Sessão ({currentVault.length})
                   </span>
                   <button
                     onClick={() => setIsAddingVaultBox(!isAddingVaultBox)}
@@ -941,13 +1238,16 @@ export default function App() {
                 </div>
 
                 {isAddingVaultBox && (
-                  <form onSubmit={handleManualAddVaultBox} className="bg-zinc-950 p-3 rounded-xl border border-zinc-700 space-y-2">
+                  <form
+                    onSubmit={handleManualAddVaultBox}
+                    className="bg-zinc-950 p-3 rounded-xl border border-zinc-700 space-y-2"
+                  >
                     <input
                       type="text"
                       required
                       value={newVaultTag}
                       onChange={(e) => setNewVaultTag(e.target.value)}
-                      placeholder="Tag (ex: #Local_Taverna ou #NPC_Kira)"
+                      placeholder="Tag (ex: #Local_Taverna ou #Segredo)"
                       className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 font-mono"
                     />
                     <textarea
@@ -955,7 +1255,7 @@ export default function App() {
                       rows={2}
                       value={newVaultContent}
                       onChange={(e) => setNewVaultContent(e.target.value)}
-                      placeholder="Fato imutável sobre esta entidade..."
+                      placeholder="Fato imutável sobre esta cena..."
                       className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
                     />
                     <div className="flex items-center justify-end gap-1.5">
@@ -978,7 +1278,9 @@ export default function App() {
 
                 <div className="space-y-2">
                   {currentVault.length === 0 ? (
-                    <p className="text-[11px] text-zinc-500 italic">Nenhum fato registrado ainda.</p>
+                    <p className="text-[11px] text-zinc-500 italic">
+                      Nenhum fato dinâmico registrado ainda.
+                    </p>
                   ) : (
                     currentVault.map((box, i) => {
                       const isFishedInScene = activeFishedTags.includes(box.tag);
@@ -993,11 +1295,13 @@ export default function App() {
                           }`}
                         >
                           <div className="flex items-center justify-between">
-                            <span className={`font-mono text-[9px] px-1.5 py-0.5 rounded border ${
-                              isFishedInScene
-                                ? 'text-amber-300 bg-amber-950/80 border-amber-600/70 font-bold'
-                                : 'text-zinc-400 bg-zinc-900 border-zinc-700/60'
-                            }`}>
+                            <span
+                              className={`font-mono text-[9px] px-1.5 py-0.5 rounded border ${
+                                isFishedInScene
+                                  ? 'text-amber-300 bg-amber-950/80 border-amber-600/70 font-bold'
+                                  : 'text-zinc-400 bg-zinc-900 border-zinc-700/60'
+                              }`}
+                            >
                               {box.tag}
                             </span>
 
@@ -1028,11 +1332,11 @@ export default function App() {
               </>
             )}
 
-            {rightDrawerTab === 'sheet' && (
+            {rightDrawerTab === 'sheet' && isRpgSession && (
               <div className="space-y-4">
                 <button
                   onClick={() => setIsDungeonPaperOpen(true)}
-                  className="w-full py-2.5 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-zinc-100 font-extrabold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-400 hover:to-amber-400 text-zinc-950 font-extrabold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2"
                 >
                   <ScrollText className="w-4 h-4" />
                   <span>Abrir Ficha Completa (Dungeon Paper)</span>
@@ -1050,7 +1354,7 @@ export default function App() {
                   </div>
 
                   <div className="w-full bg-zinc-900 h-2.5 rounded-full overflow-hidden border border-zinc-800">
-                    <div 
+                    <div
                       className="bg-rose-500 h-full transition-all duration-300"
                       style={{ width: `${(sheet.hp / sheet.maxHp) * 100}%` }}
                     />
@@ -1090,14 +1394,25 @@ export default function App() {
                   </span>
                   <div className="grid grid-cols-2 gap-2">
                     {Object.entries(sheet.stats).map(([stat, data]) => (
-                      <div key={stat} className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-2.5 flex items-center justify-between">
+                      <div
+                        key={stat}
+                        className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-2.5 flex items-center justify-between"
+                      >
                         <div>
-                          <span className="text-xs font-bold text-zinc-300">{stat}</span>
-                          <span className="text-[9px] text-zinc-500 block">val: {data.value}</span>
+                          <span className="text-xs font-bold text-zinc-300">
+                            {stat}
+                          </span>
+                          <span className="text-[9px] text-zinc-500 block">
+                            val: {data.value}
+                          </span>
                         </div>
-                        <span className={`text-xs font-mono font-black px-1.5 py-0.5 rounded border ${
-                          data.mod >= 0 ? 'bg-emerald-950/60 border-emerald-800 text-emerald-400' : 'bg-rose-950/60 border-rose-800 text-rose-400'
-                        }`}>
+                        <span
+                          className={`text-xs font-mono font-black px-1.5 py-0.5 rounded border ${
+                            data.mod >= 0
+                              ? 'bg-emerald-950/60 border-emerald-800 text-emerald-400'
+                              : 'bg-rose-950/60 border-rose-800 text-rose-400'
+                          }`}
+                        >
                           {data.mod >= 0 ? `+${data.mod}` : data.mod}
                         </span>
                       </div>
@@ -1113,35 +1428,47 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1">
                       <ScrollText className="w-3.5 h-3.5 text-amber-400" />
-                      The Chronicle (Tier A)
+                      The Chronicle (Automático +12 msgs)
                     </span>
-                    <span className="text-[9px] text-zinc-400">{currentMessages.length} turnos</span>
+                    <span className="text-[9px] text-zinc-400">
+                      {currentMessages.length} turnos
+                    </span>
                   </div>
                   <p className="text-[10px] text-zinc-400 leading-relaxed">
-                    Comprime turnos antigos em uma linha do tempo macro contínua para campanhas infinitas sem estourar o contexto da IA.
+                    Compacta turnos antigos automaticamente ao passar de 12 mensagens para economizar tokens.
                   </p>
                 </div>
 
-                {currentMessages.length > 5 && (
+                {currentMessages.length > 8 && (
                   <button
-                    onClick={handleCompressChronicle}
+                    onClick={() => runChronicleCompression(currentMessages, false)}
                     disabled={isCompressing}
                     className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                   >
-                    <RotateCw className={`w-3.5 h-3.5 ${isCompressing ? 'animate-spin' : ''}`} />
-                    <span>{isCompressing ? 'Comprimindo com IA...' : 'Comprimir Turnos Antigos'}</span>
+                    <RotateCw
+                      className={`w-3.5 h-3.5 ${
+                        isCompressing ? 'animate-spin' : ''
+                      }`}
+                    />
+                    <span>
+                      {isCompressing
+                        ? 'Comprimindo com IA...'
+                        : 'Compactar Agora'}
+                    </span>
                   </button>
                 )}
 
                 <div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-3.5 space-y-2">
-                  <span className="text-[10px] uppercase font-bold text-zinc-400">Crônica Registrada:</span>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400">
+                    Crônica Registrada:
+                  </span>
                   {currentChronicle ? (
                     <p className="text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap font-serif">
                       {currentChronicle}
                     </p>
                   ) : (
                     <p className="text-[11px] text-zinc-500 italic">
-                      A história deste mundo acabou de começar. Quando houver vários turnos acumulados, a crônica sintetizará o passado automaticamente.
+                      A história acabou de começar. Ao atingir 12 mensagens, o Cronista sintetizará o passado automaticamente.
                     </p>
                   )}
                 </div>
@@ -1151,21 +1478,96 @@ export default function App() {
         </div>
       </aside>
 
+      {/* Modal rápido para editar User Persona */}
+      {isPersonaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md p-5 space-y-3 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-zinc-100">
+                Sua Persona (Protagonista)
+              </h3>
+              <button
+                onClick={() => setIsPersonaOpen(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <input
+              type="text"
+              placeholder="Seu nome"
+              value={personaDraft.name || ''}
+              onChange={(e) =>
+                setPersonaDraft({ ...personaDraft, name: e.target.value })
+              }
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100"
+            />
+            <input
+              type="text"
+              placeholder="Aparência breve"
+              value={personaDraft.appearance || ''}
+              onChange={(e) =>
+                setPersonaDraft({ ...personaDraft, appearance: e.target.value })
+              }
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100"
+            />
+            <textarea
+              rows={3}
+              placeholder="Personalidade / Histórico curto"
+              value={personaDraft.description || ''}
+              onChange={(e) =>
+                setPersonaDraft({ ...personaDraft, description: e.target.value })
+              }
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 resize-none"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setIsPersonaOpen(false)}
+                className="px-3 py-1.5 text-xs text-zinc-400"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  saveUserPersona(personaDraft);
+                  setIsPersonaOpen(false);
+                }}
+                className="px-4 py-1.5 rounded-lg bg-amber-500 text-zinc-950 font-bold text-xs"
+              >
+                Salvar Persona
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modais */}
       <BYOKModal
         isOpen={isBYOKOpen}
         onClose={() => setIsBYOKOpen(false)}
         settings={settings}
-        onSave={saveSettings}
+        onSave={updateSettings}
       />
 
       <SanguessugaModal
         isOpen={isSanguessugaOpen}
         onClose={() => setIsSanguessugaOpen(false)}
         onAddProfile={addProfile}
-        userPersona={userPersona}
-        onSaveUserPersona={saveUserPersona}
-        byokConfig={activeConfig}
+        onAddCodexEntry={addCodexEntry}
+        byokSettings={primaryByokConfig}
+        initialType={sanguessugaInitialType}
+        codex={codex}
+      />
+
+      <CodexModal
+        isOpen={isCodexOpen}
+        onClose={() => setIsCodexOpen(false)}
+        codex={codex}
+        onAddEntry={addCodexEntry}
+        onDeleteEntry={deleteCodexEntry}
+        pinnedIds={currentScreen === 'chat' ? currentPinnedIds : undefined}
+        onTogglePin={currentScreen === 'chat' ? handleToggleCodexPin : undefined}
+        activeSessionName={currentScreen === 'chat' ? activeProfile?.name : ''}
       />
 
       <PbtaRollModal
@@ -1180,7 +1582,7 @@ export default function App() {
             INT: sheet.stats.INT.mod,
             SAB: sheet.stats.SAB.mod,
             CAR: sheet.stats.CAR.mod,
-          }
+          },
         }}
         onRollConfirmed={handlePbtaRollConfirmed}
       />
