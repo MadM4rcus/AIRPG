@@ -1,63 +1,9 @@
 import { callLLM } from '../services/llmService';
 
-/**
- * Lê texto bruto copiado de qualquer plataforma (ou página web) e destila em:
- * 1) Sessão principal (Conversa Livre ou Campanha RPG) com premissa enxuta
- * 2) Lista de objetos reutilizáveis para o Codex (NPCs, Locais e Regras de Mundo)
- */
-export async function extractBotAndCodexFromRawText({
-  rawText,
-  targetType = 'chat',
-  byokSettings,
-}) {
-  const systemPrompt = `Você é um Arquivista de RPG e Roleplay especialista em extrair e compactar fichas.
-Analise o texto bruto fornecido (que pode conter lixo de interface web, descrições longas, lore e personagens) e retorne APENAS um JSON válido, sem markdown e sem explicações fora do JSON.
-
-Estrutura exata do JSON:
-{
-  "name": "Nome principal da cena, mundo ou personagem",
-  "tag": "Gênero curto (ex: Dark Fantasy, Sci-Fi, Romance)",
-  "personality": "Resumo objetivo da premissa, tom e regras gerais (máx 3 frases)",
-  "scenario": "Descrição curta do local e situação inicial (máx 2 frases)",
-  "firstMessage": "Primeira fala ou abertura da cena em português",
-  "codexItems": [
-    {
-      "category": "NPC" | "LOCAL" | "MUNDO",
-      "name": "Nome do NPC, Local ou Regra",
-      "tag": "#TagCurta",
-      "summary": "Descrição densa e curta (1 a 2 frases) com aparência, personalidade, limites ou regras."
-    }
-  ]
-}
-
-Regras:
-- Extraia TODOS os NPCs relevantes, Locais importantes e Regras de Mundo mencionados no texto para "codexItems".
-- Mantenha cada "summary" curto (1-2 frases) para economizar tokens nas futuras conversas.
-- Ignore menus, botões, contadores de mensagens ou lixo de HTML/página web.
-- Traduza ou adapte para português do Brasil natural.`;
-
-  const responseText = await callLLM({
-    systemPrompt,
-    messages: [
-      {
-        role: 'user',
-        content: `Modo destino: ${
-          targetType === 'rpg' ? 'Campanha RPG' : 'Conversa Livre'
-        }\n\nTexto bruto extraído:\n${rawText.slice(0, 12000)}`,
-      },
-    ],
-    byokConfig: {
-      provider: byokSettings.provider,
-      apiKey: byokSettings.apiKey,
-      model: byokSettings.model,
-      temperature: 0.3,
-    },
-  });
-
-  // Limpa eventuais blocos ```json ... ```
-  const cleaned = responseText
-    .replace(/^```json\s*/i, '')
-    .replace(/```$/i, '')
+function tryParseExtractedJson(rawText) {
+  const cleaned = rawText
+    .replace(/```json\s*/gi, '')
+    .replace(/```/g, '')
     .trim();
 
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -65,7 +11,106 @@ Regras:
     throw new Error('A IA não retornou um JSON válido na extração.');
   }
 
-  const parsed = JSON.parse(jsonMatch[0]);
+  let candidate = jsonMatch[0]
+    // Remove vírgulas sobrando antes de } ou ]
+    .replace(/,\s*([}\]])/g, '$1');
+
+  try {
+    return JSON.parse(candidate);
+  } catch (firstErr) {
+    // Fallback: extrai os campos principais e cada item válido de codexItems via regex
+    const extractStringField = (key) => {
+      const m = candidate.match(new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`));
+      if (!m) return '';
+      try {
+        return JSON.parse(`"${m[1]}"`);
+      } catch {
+        return m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      }
+    };
+
+    const codexItems = [];
+    const itemRegex =
+      /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"name"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"tag"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"summary"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}/g;
+
+    let match;
+    while ((match = itemRegex.exec(candidate)) !== null) {
+      codexItems.push({
+        category: match[1],
+        name: match[2].replace(/\\"/g, '"'),
+        tag: match[3].replace(/\\"/g, '"'),
+        summary: match[4].replace(/\\"/g, '"'),
+      });
+    }
+
+    const name = extractStringField('name');
+    if (!name && codexItems.length === 0) {
+      throw firstErr;
+    }
+
+    return {
+      name,
+      tag: extractStringField('tag'),
+      personality: extractStringField('personality'),
+      scenario: extractStringField('scenario'),
+      firstMessage: extractStringField('firstMessage'),
+      codexItems,
+    };
+  }
+}
+
+export async function extractBotAndCodexFromRawText({
+  rawText,
+  targetType = 'chat',
+  byokSettings,
+}) {
+  const systemPrompt = `You are an expert RPG & Roleplay Archivist.
+Analyze the raw text provided and return ONLY valid JSON, with no markdown fences and no commentary outside the JSON.
+
+Exact JSON structure:
+{
+  "name": "Main title of the scenario, world, or character",
+  "tag": "Short genre tag (e.g., Reality TV, Dark Fantasy, Sci-Fi)",
+  "personality": "Concise summary of the premise, tone, and general rules (max 4 sentences)",
+  "scenario": "Short description of the opening location and situation (max 3 sentences)",
+  "firstMessage": "Opening scene / greeting preserving the original opening",
+  "codexItems": [
+    {
+      "category": "NPC" | "LOCAL" | "MUNDO",
+      "name": "Name of the NPC, Location, or Rule",
+      "tag": "#ShortTag",
+      "summary": "Dense 1-2 sentence description with appearance, personality, role, or rules."
+    }
+  ]
+}
+
+CRITICAL RULES:
+- Extract ALL relevant NPCs, Locations, and World Rules into "codexItems".
+- Keep each "summary" short (1-2 sentences) to save tokens.
+- NEVER put unescaped double quotes (") inside JSON string values; use single quotes (') for inner quotes or dialogue inside JSON strings.
+- Preserve the ORIGINAL LANGUAGE of the pasted text (if English, write every JSON value in English; if Portuguese, write in Portuguese), unless an explicit instruction at the end requests a specific language.`;
+
+  const responseText = await callLLM({
+    systemPrompt,
+    messages: [
+      {
+        role: 'user',
+        content: `Target mode: ${
+          targetType === 'rpg' ? 'RPG Campaign' : 'Freeform Chat'
+        }\n\nRaw text:\n${rawText.slice(0, 12000)}`,
+      },
+    ],
+    byokConfig: {
+      provider: byokSettings.provider,
+      apiKey: byokSettings.apiKey,
+      model: byokSettings.model,
+      customEndpointUrl: byokSettings.customEndpointUrl,
+      temperature: 0.2,
+    },
+  });
+
+  const parsed = tryParseExtractedJson(responseText);
+
   return {
     type: targetType,
     name: parsed.name || 'Cenário Importado',

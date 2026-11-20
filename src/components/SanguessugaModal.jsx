@@ -11,6 +11,7 @@ import {
   Copy,
   Wand2,
   Loader2,
+  Key,
 } from 'lucide-react';
 import { extractBotAndCodexFromRawText } from '../engine/sanguessugaExtractor';
 
@@ -20,6 +21,8 @@ export default function SanguessugaModal({
   onAddProfile,
   onAddCodexEntry,
   byokSettings,
+  chronicleByokSettings,
+  onOpenBYOK,
   initialType = 'chat',
   codex = [],
 }) {
@@ -63,7 +66,8 @@ export default function SanguessugaModal({
   const handleSmartExtract = async (e) => {
     e.preventDefault();
     if (!rawPaste.trim()) return;
-    if (!byokSettings?.isReady) {
+    const extractorByok = chronicleByokSettings?.isReady ? chronicleByokSettings : byokSettings;
+    if (!extractorByok?.isReady) {
       setErrorMsg('Configure sua chave ou URL do túnel no botão BYOK antes de usar a extração com IA.');
       return;
     }
@@ -74,7 +78,7 @@ export default function SanguessugaModal({
       const extracted = await extractBotAndCodexFromRawText({
         rawText: rawPaste,
         targetType: entityType,
-        byokSettings,
+        byokSettings: extractorByok,
       });
 
       // Cria cada NPC, Local ou Regra extraída na Biblioteca Compartilhada e já fixa na sessão
@@ -185,6 +189,10 @@ export default function SanguessugaModal({
     setTimeout(() => setCopiedBookmarklet(false), 2000);
   };
 
+  const extractorProviderLabel = chronicleByokSettings?.isReady
+    ? 'BYOK'
+    : `Agente: ${byokSettings?.provider?.toUpperCase() || 'NÃO CONFIGURADO'}`;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-4">
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -203,12 +211,24 @@ export default function SanguessugaModal({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onOpenBYOK?.()}
+              className="h-9 px-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/15 transition-colors flex items-center gap-1.5 text-[11px] font-semibold"
+              title="Configurar provedor BYOK"
+            >
+              <Key className="w-3.5 h-3.5" />
+              {extractorProviderLabel}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Seletor de Modo: Conversa Livre vs Campanha RPG */}

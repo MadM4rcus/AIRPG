@@ -1903,6 +1903,8 @@ export default function App() {
         onAddProfile={addProfile}
         onAddCodexEntry={addCodexEntry}
         byokSettings={primaryByokConfig}
+        chronicleByokSettings={chronicleByokConfig}
+        onOpenBYOK={() => setIsBYOKOpen(true)}
         initialType={sanguessugaInitialType}
         codex={codex}
       />
