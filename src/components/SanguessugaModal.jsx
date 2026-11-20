@@ -63,8 +63,8 @@ export default function SanguessugaModal({
   const handleSmartExtract = async (e) => {
     e.preventDefault();
     if (!rawPaste.trim()) return;
-    if (!byokSettings?.apiKey) {
-      setErrorMsg('Configure sua API Key no botão BYOK antes de usar a extração com IA.');
+    if (!byokSettings?.isReady) {
+      setErrorMsg('Configure sua chave ou URL do túnel no botão BYOK antes de usar a extração com IA.');
       return;
     }
 
