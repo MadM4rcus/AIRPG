@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-
-const STORAGE_KEY = 'airpg_byok_settings';
+import { saveUserDocToCloud } from '../services/firebase';
 
 export const DEFAULT_BYOK_SETTINGS = {
   activeProvider: 'openrouter',
@@ -41,32 +40,57 @@ export const POPULAR_MODELS = {
   ],
 };
 
-export function useBYOK() {
+function mergeSettings(raw) {
+  return {
+    ...DEFAULT_BYOK_SETTINGS,
+    ...(raw || {}),
+    openrouter: { ...DEFAULT_BYOK_SETTINGS.openrouter, ...(raw?.openrouter || {}) },
+    groq: { ...DEFAULT_BYOK_SETTINGS.groq, ...(raw?.groq || {}) },
+    gemini: { ...DEFAULT_BYOK_SETTINGS.gemini, ...(raw?.gemini || {}) },
+  };
+}
+
+export function useBYOK(uid) {
+  const storageKey = uid ? `airpg_byok_settings_${uid}` : 'airpg_byok_settings';
+
   const [settings, setSettings] = useState(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return {
-          ...DEFAULT_BYOK_SETTINGS,
-          ...parsed,
-          openrouter: { ...DEFAULT_BYOK_SETTINGS.openrouter, ...(parsed.openrouter || {}) },
-          groq: { ...DEFAULT_BYOK_SETTINGS.groq, ...(parsed.groq || {}) },
-          gemini: { ...DEFAULT_BYOK_SETTINGS.gemini, ...(parsed.gemini || {}) },
-        };
-      }
+      const stored = localStorage.getItem(storageKey);
+      if (stored) return mergeSettings(JSON.parse(stored));
     } catch (e) {
       console.warn('Erro ao ler chaves do localStorage:', e);
     }
     return DEFAULT_BYOK_SETTINGS;
   });
 
-  const saveSettings = (newSettings) => {
-    setSettings(newSettings);
+  useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newSettings));
+      const stored = localStorage.getItem(storageKey);
+      setSettings(stored ? mergeSettings(JSON.parse(stored)) : DEFAULT_BYOK_SETTINGS);
+    } catch (e) {
+      setSettings(DEFAULT_BYOK_SETTINGS);
+    }
+  }, [storageKey]);
+
+  const hydrateSettingsFromCloud = (cloudSettings) => {
+    if (!cloudSettings) return;
+    const merged = mergeSettings(cloudSettings);
+    setSettings(merged);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+    } catch (e) {}
+  };
+
+  const saveSettings = (newSettings) => {
+    const merged = mergeSettings(newSettings);
+    setSettings(merged);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(merged));
     } catch (e) {
       console.error('Falha ao salvar no localStorage:', e);
+    }
+    if (uid) {
+      saveUserDocToCloud(uid, { byokSettings: merged });
     }
   };
 
@@ -86,6 +110,7 @@ export function useBYOK() {
   return {
     settings,
     saveSettings,
+    hydrateSettingsFromCloud,
     hasKey,
     getActiveConfig,
     activeProvider: settings.activeProvider,

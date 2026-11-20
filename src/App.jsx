@@ -25,7 +25,8 @@ import {
   ScrollText,
   Cloud,
   CloudOff,
-  RotateCw
+  RotateCw,
+  LogOut
 } from 'lucide-react';
 import { useBYOK } from './hooks/useBYOK';
 import { useProfiles } from './hooks/useProfiles';
@@ -34,12 +35,20 @@ import BYOKModal from './components/BYOKModal';
 import SanguessugaModal from './components/SanguessugaModal';
 import PbtaRollModal from './components/PbtaRollModal';
 import DungeonPaperModal from './components/DungeonPaperModal';
+import LoginScreen from './components/LoginScreen';
 import { callLLM } from './services/llmService';
 import { buildSystemPrompt } from './engine/promptBuilder';
 import { parseAssistantResponse } from './engine/stateParser';
 import { fishRelevantVaultBoxes } from './engine/vaultFisher';
 import { compressMessagesIntoChronicle } from './engine/chronicleCompressor';
-import { saveChatSessionToCloud } from './services/firebase';
+import { 
+  subscribeToAuth, 
+  logoutUser, 
+  loadUserDocFromCloud, 
+  loadProfilesFromCloud, 
+  loadAllChatsFromCloud, 
+  saveChatSessionToCloud 
+} from './services/firebase';
 
 function AvatarDisplay({ avatar, className = 'text-base' }) {
   if (typeof avatar === 'string' && avatar.startsWith('http')) {
@@ -55,7 +64,20 @@ function AvatarDisplay({ avatar, className = 'text-base' }) {
 }
 
 export default function App() {
-  const { settings, saveSettings, getActiveConfig } = useBYOK();
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth((firebaseUser) => {
+      setUser(firebaseUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const uid = user?.uid || null;
+
+  const { settings, saveSettings, hydrateSettingsFromCloud, getActiveConfig } = useBYOK(uid);
   const { 
     profiles, 
     activeProfile, 
@@ -63,12 +85,14 @@ export default function App() {
     addProfile, 
     deleteProfile,
     userPersona,
-    saveUserPersona
-  } = useProfiles();
+    saveUserPersona,
+    hydrateFromCloud
+  } = useProfiles(uid);
 
   const { 
     sheet, 
     saveSheet,
+    hydrateSheetFromCloud,
     updateHp, 
     updateStatScore,
     changeClass,
@@ -76,7 +100,7 @@ export default function App() {
     removeBond,
     addItem,
     removeItem
-  } = useCharacterSheet();
+  } = useCharacterSheet(uid);
 
   const [currentScreen, setCurrentScreen] = useState('feed');
   const [searchFilter, setSearchFilter] = useState('');
@@ -86,13 +110,13 @@ export default function App() {
   const [isPbtaRollOpen, setIsPbtaRollOpen] = useState(false);
   const [isDungeonPaperOpen, setIsDungeonPaperOpen] = useState(false);
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
-  const [rightDrawerTab, setRightDrawerTab] = useState('vault'); // 'vault' | 'sheet' | 'chronicle'
+  const [rightDrawerTab, setRightDrawerTab] = useState('vault');
 
-  const [currentMode, setCurrentMode] = useState('freeroam'); // 'freeroam' | 'hardcore'
+  const [currentMode, setCurrentMode] = useState('freeroam');
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
-  const [cloudSyncStatus, setCloudSyncStatus] = useState('saved'); // 'saved' | 'syncing' | 'error'
+  const [cloudSyncStatus, setCloudSyncStatus] = useState('saved');
   const [errorMessage, setErrorMessage] = useState('');
 
   const [activeFishedTags, setActiveFishedTags] = useState([]);
@@ -100,33 +124,113 @@ export default function App() {
   const [newVaultTag, setNewVaultTag] = useState('');
   const [newVaultContent, setNewVaultContent] = useState('');
 
-  const [chatHistories, setChatHistories] = useState(() => {
-    try {
-      const stored = localStorage.getItem('airpg_chat_histories');
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return {};
-  });
+  const chatKey = uid ? `airpg_chat_histories_${uid}` : 'airpg_chat_histories';
+  const vaultKey = uid ? `airpg_vaults_data_${uid}` : 'airpg_vaults_data';
+  const chronicleKey = uid ? `airpg_chronicles_data_${uid}` : 'airpg_chronicles_data';
 
-  const [vaults, setVaults] = useState(() => {
-    try {
-      const stored = localStorage.getItem('airpg_vaults_data');
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return {};
-  });
+  const [chatHistories, setChatHistories] = useState({});
+  const [vaults, setVaults] = useState({});
+  const [chronicles, setChronicles] = useState({});
 
-  // The Chronicle (Tier A) acumulado por mundo
-  const [chronicles, setChronicles] = useState(() => {
+  // Carrega dados locais e sincroniza da nuvem assim que o usuário faz login
+  useEffect(() => {
+    if (!uid) {
+      setChatHistories({});
+      setVaults({});
+      setChronicles({});
+      setCurrentScreen('feed');
+      return;
+    }
+
     try {
-      const stored = localStorage.getItem('airpg_chronicles_data');
-      if (stored) return JSON.parse(stored);
+      const localChats = localStorage.getItem(chatKey);
+      if (localChats) setChatHistories(JSON.parse(localChats));
+      const localVaults = localStorage.getItem(vaultKey);
+      if (localVaults) setVaults(JSON.parse(localVaults));
+      const localChronicles = localStorage.getItem(chronicleKey);
+      if (localChronicles) setChronicles(JSON.parse(localChronicles));
     } catch (e) {}
-    return {};
-  });
+
+    let isMounted = true;
+    async function restoreFromCloud() {
+      setCloudSyncStatus('syncing');
+      try {
+        const [userDoc, cloudProfiles, cloudChats] = await Promise.all([
+          loadUserDocFromCloud(uid),
+          loadProfilesFromCloud(uid),
+          loadAllChatsFromCloud(uid),
+        ]);
+
+        if (!isMounted) return;
+
+        if (userDoc?.byokSettings) {
+          hydrateSettingsFromCloud(userDoc.byokSettings);
+        }
+        if (userDoc?.dungeonPaperSheet) {
+          hydrateSheetFromCloud(userDoc.dungeonPaperSheet);
+        }
+        hydrateFromCloud(cloudProfiles, userDoc?.userPersona);
+
+        if (cloudChats && Object.keys(cloudChats).length > 0) {
+          const nextChats = {};
+          const nextVaults = {};
+          const nextChronicles = {};
+
+          Object.entries(cloudChats).forEach(([profId, session]) => {
+            if (Array.isArray(session.messages)) nextChats[profId] = session.messages;
+            if (Array.isArray(session.vault)) nextVaults[profId] = session.vault;
+            if (typeof session.chronicle === 'string') nextChronicles[profId] = session.chronicle;
+          });
+
+          setChatHistories((prev) => {
+            const merged = { ...prev, ...nextChats };
+            try { localStorage.setItem(chatKey, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+          setVaults((prev) => {
+            const merged = { ...prev, ...nextVaults };
+            try { localStorage.setItem(vaultKey, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+          setChronicles((prev) => {
+            const merged = { ...prev, ...nextChronicles };
+            try { localStorage.setItem(chronicleKey, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+        }
+        setCloudSyncStatus('saved');
+      } catch (err) {
+        if (isMounted) setCloudSyncStatus('error');
+      }
+    }
+
+    restoreFromCloud();
+    return () => { isMounted = false; };
+  }, [uid]);
 
   const messagesEndRef = useRef(null);
   const activeConfig = getActiveConfig();
+
+  useEffect(() => {
+    if (currentScreen === 'chat' && user) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatHistories, isLoading, currentScreen, user]);
+
+  // Tela de carregamento inicial da sessão
+  if (authLoading) {
+    return (
+      <div className="min-h-screen w-full bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
+        <span className="text-xs text-zinc-400">Verificando sessão...</span>
+      </div>
+    );
+  }
+
+  // Bloqueia acesso até o usuário entrar com Google
+  if (!user) {
+    return <LoginScreen />;
+  }
 
   const currentMessages = chatHistories[activeProfile.id] || [
     { role: 'assistant', content: activeProfile.firstMessage },
@@ -135,11 +239,18 @@ export default function App() {
   const currentVault = vaults[activeProfile.id] || activeProfile.initialVault || [];
   const currentChronicle = chronicles[activeProfile.id] || '';
 
+  const triggerCloudSync = async (msgs, vault, chronicle) => {
+    if (!uid) return;
+    setCloudSyncStatus('syncing');
+    const ok = await saveChatSessionToCloud(uid, activeProfile.id, msgs, vault, chronicle);
+    setCloudSyncStatus(ok ? 'saved' : 'error');
+  };
+
   const updateCurrentMessages = (newMsgs) => {
     setChatHistories((prev) => {
       const updated = { ...prev, [activeProfile.id]: newMsgs };
       try {
-        localStorage.setItem('airpg_chat_histories', JSON.stringify(updated));
+        localStorage.setItem(chatKey, JSON.stringify(updated));
       } catch (e) {}
       return updated;
     });
@@ -150,7 +261,7 @@ export default function App() {
     setVaults((prev) => {
       const updated = { ...prev, [activeProfile.id]: newVault };
       try {
-        localStorage.setItem('airpg_vaults_data', JSON.stringify(updated));
+        localStorage.setItem(vaultKey, JSON.stringify(updated));
       } catch (e) {}
       return updated;
     });
@@ -161,29 +272,22 @@ export default function App() {
     setChronicles((prev) => {
       const updated = { ...prev, [activeProfile.id]: newChronicle };
       try {
-        localStorage.setItem('airpg_chronicles_data', JSON.stringify(updated));
+        localStorage.setItem(chronicleKey, JSON.stringify(updated));
       } catch (e) {}
       return updated;
     });
     triggerCloudSync(currentMessages, currentVault, newChronicle);
   };
 
-  // Sincronização em background no Firestore (coleção airpg_chats)
-  const triggerCloudSync = async (msgs, vault, chronicle) => {
-    setCloudSyncStatus('syncing');
-    const ok = await saveChatSessionToCloud(activeProfile.id, msgs, vault, chronicle);
-    setCloudSyncStatus(ok ? 'saved' : 'error');
-  };
-
-  useEffect(() => {
-    if (currentScreen === 'chat') {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [currentMessages, isLoading, currentScreen]);
-
   const handleOpenChat = (profileId) => {
     setActiveProfileId(profileId);
     setCurrentScreen('chat');
+  };
+
+  const handleLogout = async () => {
+    if (confirm('Deseja sair da sua conta Google?')) {
+      await logoutUser();
+    }
   };
 
   const handleManualAddVaultBox = (e) => {
@@ -202,7 +306,6 @@ export default function App() {
     updateCurrentVault(nextVault);
   };
 
-  // Rotina do Chronicle: comprime mensagens antigas se houver mais de 5 turnos acumulados
   const handleCompressChronicle = async () => {
     if (currentMessages.length <= 4 || isCompressing) return;
     setIsCompressing(true);
@@ -265,7 +368,6 @@ export default function App() {
         characterSheet: currentMode === 'hardcore' ? sheet : null,
       });
 
-      // Tier C — Active Buffer: envia os últimos 10 turnos para economizar contexto
       const recentBuffer = updatedMessages.slice(-10);
 
       const messagesForLLM = mechanicalInjection
@@ -339,6 +441,7 @@ export default function App() {
               <button
                 onClick={() => setIsSanguessugaOpen(true)}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:border-zinc-700"
+                title="Editar sua Persona no RPG"
               >
                 <User className="w-3.5 h-3.5 text-amber-400" />
                 <span className="font-medium max-w-[80px] truncate">{userPersona.name}</span>
@@ -353,6 +456,21 @@ export default function App() {
                 {!activeConfig.isReady && (
                   <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                 )}
+              </button>
+
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 hover:text-rose-400 hover:border-rose-800/60 transition"
+                title={`Conectado como ${user.email} — Clique para sair`}
+              >
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="" className="w-5 h-5 rounded-full" />
+                ) : (
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-bold">
+                    {user.email?.[0]?.toUpperCase() || 'G'}
+                  </span>
+                )}
+                <LogOut className="w-3.5 h-3.5" />
               </button>
             </div>
           </header>
@@ -526,7 +644,6 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {/* Botão rápido para a Ficha Dungeon Paper no modo Hardcore */}
               {currentMode === 'hardcore' && (
                 <button
                   onClick={() => setIsDungeonPaperOpen(true)}
@@ -538,7 +655,6 @@ export default function App() {
                 </button>
               )}
 
-              {/* Toggle de Modo */}
               <button
                 onClick={() => setCurrentMode(currentMode === 'freeroam' ? 'hardcore' : 'freeroam')}
                 className={`p-1.5 px-2 rounded-lg border text-[11px] font-semibold flex items-center gap-1 transition ${
@@ -560,7 +676,6 @@ export default function App() {
                 )}
               </button>
 
-              {/* Botão Drawer Direito (Vault / Ficha / Crônica) */}
               <button
                 onClick={() => setRightDrawerOpen(true)}
                 className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 relative"
@@ -607,7 +722,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Aviso sutil de Crônica ativa se houver */}
             {currentChronicle && (
               <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-3 flex items-start gap-2.5 text-xs text-zinc-400">
                 <ScrollText className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -679,7 +793,6 @@ export default function App() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Bar com Botão PbtA */}
           <div className="p-3 border-t border-zinc-800/80 bg-zinc-950 shrink-0">
             <form onSubmit={handleSend} className="relative flex items-center gap-1.5">
               {currentMode === 'hardcore' && (
@@ -797,7 +910,6 @@ export default function App() {
           </div>
 
           <div className="p-4 space-y-4 overflow-y-auto flex-1">
-            {/* ABA 1: THE VAULT */}
             {rightDrawerTab === 'vault' && (
               <>
                 <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3 space-y-1.5">
@@ -916,7 +1028,6 @@ export default function App() {
               </>
             )}
 
-            {/* ABA 2: FICHA RESUMIDA */}
             {rightDrawerTab === 'sheet' && (
               <div className="space-y-4">
                 <button
@@ -996,7 +1107,6 @@ export default function App() {
               </div>
             )}
 
-            {/* ABA 3: THE CHRONICLE (COMPRESSOR TIER A) */}
             {rightDrawerTab === 'chronicle' && (
               <div className="space-y-3">
                 <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3 space-y-1.5">

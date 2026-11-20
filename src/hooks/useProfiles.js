@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { saveProfileToCloud } from '../services/firebase';
-
-const PROFILES_STORAGE_KEY = 'airpg_profiles_data';
-const USER_PERSONA_STORAGE_KEY = 'airpg_user_persona';
+import { useState, useEffect } from 'react';
+import { 
+  saveProfileToCloud, 
+  deleteProfileFromCloud, 
+  saveUserDocToCloud 
+} from '../services/firebase';
 
 export const DEFAULT_PROFILES = [
   {
@@ -38,10 +39,13 @@ export const DEFAULT_USER_PERSONA = {
   description: 'Um aventureiro solitário em busca de respostas, sobrevivendo pelos cantos esquecidos do mundo.',
 };
 
-export function useProfiles() {
+export function useProfiles(uid) {
+  const profilesStorageKey = uid ? `airpg_profiles_data_${uid}` : 'airpg_profiles_data';
+  const personaStorageKey = uid ? `airpg_user_persona_${uid}` : 'airpg_user_persona';
+
   const [profiles, setProfiles] = useState(() => {
     try {
-      const stored = localStorage.getItem(PROFILES_STORAGE_KEY);
+      const stored = localStorage.getItem(profilesStorageKey);
       if (stored) return JSON.parse(stored);
     } catch (e) {
       console.warn('Erro ao ler perfis do localStorage:', e);
@@ -55,7 +59,7 @@ export function useProfiles() {
 
   const [userPersona, setUserPersona] = useState(() => {
     try {
-      const stored = localStorage.getItem(USER_PERSONA_STORAGE_KEY);
+      const stored = localStorage.getItem(personaStorageKey);
       if (stored) return JSON.parse(stored);
     } catch (e) {
       console.warn('Erro ao ler persona do usuário:', e);
@@ -63,23 +67,55 @@ export function useProfiles() {
     return DEFAULT_USER_PERSONA;
   });
 
-  // Salva perfis
+  useEffect(() => {
+    try {
+      const storedProfiles = localStorage.getItem(profilesStorageKey);
+      const nextProfiles = storedProfiles ? JSON.parse(storedProfiles) : DEFAULT_PROFILES;
+      setProfiles(nextProfiles);
+      setActiveProfileId(nextProfiles[0]?.id || 'valeria_default');
+
+      const storedPersona = localStorage.getItem(personaStorageKey);
+      setUserPersona(storedPersona ? JSON.parse(storedPersona) : DEFAULT_USER_PERSONA);
+    } catch (e) {}
+  }, [profilesStorageKey, personaStorageKey]);
+
   const saveProfiles = (newProfiles) => {
     setProfiles(newProfiles);
     try {
-      localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(newProfiles));
+      localStorage.setItem(profilesStorageKey, JSON.stringify(newProfiles));
     } catch (e) {
       console.error('Falha ao salvar perfis:', e);
     }
   };
 
-  // Salva persona do usuário
+  const hydrateFromCloud = (cloudProfiles, cloudPersona) => {
+    if (Array.isArray(cloudProfiles) && cloudProfiles.length > 0) {
+      // Mescla os perfis da nuvem com os padrões caso ainda não existam
+      const cloudIds = new Set(cloudProfiles.map((p) => p.id));
+      const merged = [
+        ...cloudProfiles,
+        ...DEFAULT_PROFILES.filter((dp) => !cloudIds.has(dp.id)),
+      ];
+      saveProfiles(merged);
+      setActiveProfileId(merged[0].id);
+    }
+    if (cloudPersona && typeof cloudPersona === 'object') {
+      setUserPersona(cloudPersona);
+      try {
+        localStorage.setItem(personaStorageKey, JSON.stringify(cloudPersona));
+      } catch (e) {}
+    }
+  };
+
   const saveUserPersona = (newPersona) => {
     setUserPersona(newPersona);
     try {
-      localStorage.setItem(USER_PERSONA_STORAGE_KEY, JSON.stringify(newPersona));
+      localStorage.setItem(personaStorageKey, JSON.stringify(newPersona));
     } catch (e) {
       console.error('Falha ao salvar persona:', e);
+    }
+    if (uid) {
+      saveUserDocToCloud(uid, { userPersona: newPersona });
     }
   };
 
@@ -97,10 +133,11 @@ export function useProfiles() {
     const updated = [newProfile, ...profiles];
     saveProfiles(updated);
     setActiveProfileId(newProfile.id);
-    
-    // Sincroniza novo mundo/personagem com o Firestore em background
-    saveProfileToCloud(newProfile);
-    
+
+    if (uid) {
+      saveProfileToCloud(uid, newProfile);
+    }
+
     return newProfile;
   };
 
@@ -110,6 +147,9 @@ export function useProfiles() {
     saveProfiles(updated);
     if (activeProfileId === id) {
       setActiveProfileId(updated[0].id);
+    }
+    if (uid) {
+      deleteProfileFromCloud(uid, id);
     }
   };
 
@@ -124,5 +164,6 @@ export function useProfiles() {
     deleteProfile,
     userPersona,
     saveUserPersona,
+    hydrateFromCloud,
   };
 }

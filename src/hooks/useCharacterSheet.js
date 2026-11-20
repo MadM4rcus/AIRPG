@@ -1,7 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DW_CLASSES } from '../engine/dungeonWorldClasses';
-
-const SHEET_STORAGE_KEY = 'airpg_dungeon_paper_sheet';
+import { saveUserDocToCloud } from '../services/firebase';
 
 export const DEFAULT_DW_SHEET = {
   name: 'Viajante',
@@ -10,12 +9,11 @@ export const DEFAULT_DW_SHEET = {
   level: 1,
   xp: 0,
   baseHp: 10,
-  hp: 22, // 10 + CON (12) = 22
+  hp: 22,
   maxHp: 22,
   armor: 1,
   damageDice: 'd10',
   alignment: 'Neutro (Preservar a própria honra e sobreviver)',
-  // Atributos de 1 a 18 com seus respectivos Modificadores DW
   stats: {
     FOR: { value: 16, mod: 2 },
     DES: { value: 13, mod: 1 },
@@ -36,7 +34,6 @@ export const DEFAULT_DW_SHEET = {
   ],
 };
 
-// Converte score do Dungeon World (1-18) para Modificador (-3 a +3)
 export function calculateDwMod(score) {
   const num = Number(score) || 10;
   if (num <= 3) return -3;
@@ -48,10 +45,12 @@ export function calculateDwMod(score) {
   return 3;
 }
 
-export function useCharacterSheet() {
+export function useCharacterSheet(uid) {
+  const storageKey = uid ? `airpg_dungeon_paper_sheet_${uid}` : 'airpg_dungeon_paper_sheet';
+
   const [sheet, setSheet] = useState(() => {
     try {
-      const stored = localStorage.getItem(SHEET_STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey);
       if (stored) return JSON.parse(stored);
     } catch (e) {
       console.warn('Erro ao ler ficha do Dungeon Paper:', e);
@@ -59,12 +58,32 @@ export function useCharacterSheet() {
     return DEFAULT_DW_SHEET;
   });
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      setSheet(stored ? JSON.parse(stored) : DEFAULT_DW_SHEET);
+    } catch (e) {
+      setSheet(DEFAULT_DW_SHEET);
+    }
+  }, [storageKey]);
+
+  const hydrateSheetFromCloud = (cloudSheet) => {
+    if (!cloudSheet || typeof cloudSheet !== 'object') return;
+    setSheet(cloudSheet);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(cloudSheet));
+    } catch (e) {}
+  };
+
   const saveSheet = (newSheet) => {
     setSheet(newSheet);
     try {
-      localStorage.setItem(SHEET_STORAGE_KEY, JSON.stringify(newSheet));
+      localStorage.setItem(storageKey, JSON.stringify(newSheet));
     } catch (e) {
       console.error('Falha ao salvar ficha:', e);
+    }
+    if (uid) {
+      saveUserDocToCloud(uid, { dungeonPaperSheet: newSheet });
     }
   };
 
@@ -87,7 +106,6 @@ export function useCharacterSheet() {
         [statName]: { value: score, mod },
       };
 
-      // Se mexeu em CON, recalcula o maxHp
       let newMaxHp = prev.maxHp;
       if (statName === 'CON') {
         const classDef = DW_CLASSES[prev.classId] || DW_CLASSES.guerreiro;
@@ -163,6 +181,7 @@ export function useCharacterSheet() {
   return {
     sheet,
     saveSheet,
+    hydrateSheetFromCloud,
     updateHp,
     updateStatScore,
     changeClass,

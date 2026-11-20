@@ -1,5 +1,11 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, signInAnonymously } from "firebase/auth";
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged 
+} from "firebase/auth";
 import { 
   getFirestore, 
   collection, 
@@ -7,11 +13,9 @@ import {
   setDoc, 
   getDocs, 
   getDoc,
-  query,
-  orderBy
+  deleteDoc
 } from "firebase/firestore";
 
-// Credenciais lidas do .env (nunca hardcoded)
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -23,54 +27,95 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// Inicialização segura
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+const googleProvider = new GoogleAuthProvider();
 
-// Garante sessão autenticada anonimamente para salvar no Firestore sem atrito de login
-export async function ensureAuth() {
-  if (!auth.currentUser) {
-    try {
-      await signInAnonymously(auth);
-    } catch (e) {
-      console.warn("Autenticação anônima Firebase offline/não habilitada:", e);
-    }
-  }
-  return auth.currentUser;
+// Login com Google (Gmail)
+export async function loginWithGoogle() {
+  const result = await signInWithPopup(auth, googleProvider);
+  return result.user;
+}
+
+// Logout
+export async function logoutUser() {
+  await signOut(auth);
+}
+
+// Observador de sessão (avisa o app quando o usuário entra ou sai)
+export function subscribeToAuth(callback) {
+  return onAuthStateChanged(auth, callback);
 }
 
 // ==============================================================
-// COLEÇÕES ISOLADAS COM PREFIXO OBRIGATÓRIO: airpg_*
+// DADOS ISOLADOS POR USUÁRIO: airpg_users/{uid}
 // ==============================================================
 
-/**
- * Salva ou atualiza um mundo/bot no Firestore (airpg_profiles)
- */
-export async function saveProfileToCloud(profile) {
+// Salva configurações do usuário (chaves BYOK, persona ou ficha)
+export async function saveUserDocToCloud(uid, partialData) {
+  if (!uid) return false;
   try {
-    const user = await ensureAuth();
-    const docRef = doc(db, "airpg_profiles", profile.id);
+    const docRef = doc(db, "airpg_users", uid);
     await setDoc(docRef, {
-      ...profile,
-      userId: user?.uid || "anonymous",
+      ...partialData,
       updatedAt: new Date().toISOString()
     }, { merge: true });
     return true;
   } catch (err) {
-    console.warn("Falha ao sincronizar perfil no Firestore:", err);
+    console.warn("Falha ao salvar dados do usuário no Firestore:", err);
     return false;
   }
 }
 
-/**
- * Busca todos os mundos/bots salvos na nuvem (airpg_profiles)
- */
-export async function loadProfilesFromCloud() {
+// Carrega documento principal do usuário (chaves, persona, ficha)
+export async function loadUserDocFromCloud(uid) {
+  if (!uid) return null;
   try {
-    await ensureAuth();
-    const snap = await getDocs(collection(db, "airpg_profiles"));
+    const docRef = doc(db, "airpg_users", uid);
+    const snap = await getDoc(docRef);
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    console.warn("Falha ao ler dados do usuário no Firestore:", err);
+    return null;
+  }
+}
+
+// Salva um mundo/personagem do usuário
+export async function saveProfileToCloud(uid, profile) {
+  if (!uid || !profile?.id) return false;
+  try {
+    const docRef = doc(db, "airpg_users", uid, "profiles", profile.id);
+    await setDoc(docRef, {
+      ...profile,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn("Falha ao salvar perfil no Firestore:", err);
+    return false;
+  }
+}
+
+// Exclui um mundo/personagem do usuário
+export async function deleteProfileFromCloud(uid, profileId) {
+  if (!uid || !profileId) return false;
+  try {
+    const docRef = doc(db, "airpg_users", uid, "profiles", profileId);
+    await deleteDoc(docRef);
+    return true;
+  } catch (err) {
+    console.warn("Falha ao excluir perfil no Firestore:", err);
+    return false;
+  }
+}
+
+// Carrega todos os mundos/personagens do usuário
+export async function loadProfilesFromCloud(uid) {
+  if (!uid) return [];
+  try {
+    const snap = await getDocs(collection(db, "airpg_users", uid, "profiles"));
     const list = [];
     snap.forEach((d) => list.push(d.data()));
     return list;
@@ -80,19 +125,16 @@ export async function loadProfilesFromCloud() {
   }
 }
 
-/**
- * Salva mensagens da sessão e o Vault no Firestore (airpg_chats)
- */
-export async function saveChatSessionToCloud(profileId, messages, vault, chronicle = '') {
+// Salva mensagens, Vault e Crônica de um chat específico do usuário
+export async function saveChatSessionToCloud(uid, profileId, messages, vault, chronicle = '') {
+  if (!uid || !profileId) return false;
   try {
-    const user = await ensureAuth();
-    const docRef = doc(db, "airpg_chats", profileId);
+    const docRef = doc(db, "airpg_users", uid, "chats", profileId);
     await setDoc(docRef, {
       profileId,
       messages,
       vault,
       chronicle,
-      userId: user?.uid || "anonymous",
       updatedAt: new Date().toISOString()
     }, { merge: true });
     return true;
@@ -102,19 +144,18 @@ export async function saveChatSessionToCloud(profileId, messages, vault, chronic
   }
 }
 
-/**
- * Carrega sessão de chat da nuvem (airpg_chats)
- */
-export async function loadChatSessionFromCloud(profileId) {
+// Carrega todos os chats salvos do usuário
+export async function loadAllChatsFromCloud(uid) {
+  if (!uid) return {};
   try {
-    await ensureAuth();
-    const docRef = doc(db, "airpg_chats", profileId);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      return snap.data();
-    }
+    const snap = await getDocs(collection(db, "airpg_users", uid, "chats"));
+    const chatsMap = {};
+    snap.forEach((d) => {
+      chatsMap[d.id] = d.data();
+    });
+    return chatsMap;
   } catch (err) {
-    console.warn("Falha ao ler sessão do Firestore:", err);
+    console.warn("Falha ao ler chats do Firestore:", err);
+    return {};
   }
-  return null;
 }

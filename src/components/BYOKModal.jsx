@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Key, Eye, EyeOff, Check, X, ShieldAlert, Cpu } from 'lucide-react';
 import { POPULAR_MODELS } from '../hooks/useBYOK';
 
@@ -7,6 +7,10 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
   const [localSettings, setLocalSettings] = useState(settings);
   const [showKey, setShowKey] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    setLocalSettings(settings);
+  }, [settings]);
 
   if (!isOpen) return null;
 
@@ -79,7 +83,7 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
           <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800/80 flex items-start gap-2.5">
             <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Suas chaves são salvas <strong className="text-zinc-200">somente no seu navegador</strong>. Nenhuma chave passa por servidores intermediários.
+              Suas chaves são salvas no seu navegador e sincronizadas exclusivamente na <strong className="text-zinc-200">sua conta Google</strong> para acesso em qualquer dispositivo.
             </p>
           </div>
 
