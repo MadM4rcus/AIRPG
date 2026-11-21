@@ -281,6 +281,7 @@ export function useProfiles(uid) {
     characters,
     campaigns,
     activeProfile,
+    activeProfileId,
     setActiveProfileId,
     addProfile,
     deleteProfile,

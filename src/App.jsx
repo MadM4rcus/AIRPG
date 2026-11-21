@@ -101,6 +101,7 @@ export default function App() {
     characters,
     campaigns,
     activeProfile,
+    activeProfileId,
     setActiveProfileId,
     addProfile,
     deleteProfile,
@@ -116,9 +117,16 @@ export default function App() {
   const {
     codex,
     addCodexEntry,
+    updateCodexEntry,
     deleteCodexEntry,
     hydrateCodexFromCloud,
   } = useCodex(uid);
+
+  const refreshCodexFromCloud = async () => {
+    if (!uid) return;
+    const cloudCodex = await loadCodexFromCloud(uid);
+    hydrateCodexFromCloud(cloudCodex);
+  };
 
   const {
     sheet,
@@ -144,6 +152,11 @@ export default function App() {
   const [isPbtaRollOpen, setIsPbtaRollOpen] = useState(false);
   const [isDungeonPaperOpen, setIsDungeonPaperOpen] = useState(false);
   const [isPersonaOpen, setIsPersonaOpen] = useState(false);
+
+  useEffect(() => {
+    if (!uid) return;
+    refreshCodexFromCloud();
+  }, [uid, activeProfileId, isCodexOpen]);
 
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
   const [rightDrawerTab, setRightDrawerTab] = useState('vault');
@@ -1902,6 +1915,7 @@ export default function App() {
         onClose={() => setIsSanguessugaOpen(false)}
         onAddProfile={addProfile}
         onAddCodexEntry={addCodexEntry}
+        onRefreshCodex={refreshCodexFromCloud}
         byokSettings={primaryByokConfig}
         chronicleByokSettings={chronicleByokConfig}
         onOpenBYOK={() => setIsBYOKOpen(true)}
@@ -1914,6 +1928,7 @@ export default function App() {
         onClose={() => setIsCodexOpen(false)}
         codex={codex}
         onAddEntry={addCodexEntry}
+        onUpdateEntry={updateCodexEntry}
         onDeleteEntry={deleteCodexEntry}
         pinnedIds={currentScreen === 'chat' ? currentPinnedIds : undefined}
         onTogglePin={currentScreen === 'chat' ? handleToggleCodexPin : undefined}

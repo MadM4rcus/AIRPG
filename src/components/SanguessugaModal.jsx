@@ -20,6 +20,7 @@ export default function SanguessugaModal({
   onClose,
   onAddProfile,
   onAddCodexEntry,
+  onRefreshCodex,
   byokSettings,
   chronicleByokSettings,
   onOpenBYOK,
@@ -106,17 +107,22 @@ export default function SanguessugaModal({
       // Cria cada NPC, Local ou Regra extraída na Biblioteca Compartilhada e já fixa na sessão
       const createdIds = [];
       if (onAddCodexEntry && extracted.codexItems.length > 0) {
-        for (const item of extracted.codexItems) {
-          const saved = onAddCodexEntry({
+        const savedEntries = await Promise.all(
+          extracted.codexItems.map((item) =>
+            onAddCodexEntry({
             category: ['NPC', 'LOCAL', 'MUNDO'].includes(item.category)
               ? item.category
               : 'NPC',
             name: item.name,
             tag: item.tag,
             summary: item.summary,
-          });
+            })
+          )
+        );
+        savedEntries.forEach((saved) => {
           if (saved?.id) createdIds.push(saved.id);
-        }
+        });
+        await onRefreshCodex?.();
       }
 
       onAddProfile({

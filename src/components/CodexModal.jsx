@@ -7,6 +7,7 @@ import {
   Globe,
   Plus,
   Trash2,
+  Pencil,
   Pin,
   Search,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ export default function CodexModal({
   onClose,
   codex = [],
   onAddEntry,
+  onUpdateEntry,
   onDeleteEntry,
   pinnedIds = [],
   onTogglePin,
@@ -35,15 +37,37 @@ export default function CodexModal({
   const [name, setName] = useState('');
   const [tag, setTag] = useState('');
   const [summary, setSummary] = useState('');
+  const [editingId, setEditingId] = useState(null);
 
   if (!isOpen) return null;
 
   const pinnedSet = new Set(pinnedIds || []);
 
-  const handleCreate = (e) => {
+  const handleCreate = async (e) => {
     e.preventDefault();
     if (!name.trim() || !summary.trim()) return;
-    onAddEntry({ category, name, tag, summary });
+    if (editingId) {
+      await onUpdateEntry?.(editingId, { category, name, tag, summary });
+    } else {
+      await onAddEntry?.({ category, name, tag, summary });
+    }
+    setEditingId(null);
+    setName('');
+    setTag('');
+    setSummary('');
+  };
+
+  const handleEdit = (item) => {
+    setEditingId(item.id);
+    setCategory(item.category || 'NPC');
+    setName(item.name || '');
+    setTag(item.tag || '');
+    setSummary(item.summary || '');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setCategory('NPC');
     setName('');
     setTag('');
     setSummary('');
@@ -94,7 +118,7 @@ export default function CodexModal({
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                + Novo Registro na Biblioteca
+                {editingId ? 'Editar Registro da Biblioteca' : '+ Novo Registro na Biblioteca'}
               </span>
               <div className="flex gap-1.5">
                 {CATEGORIES.map((cat) => {
@@ -158,13 +182,28 @@ export default function CodexModal({
                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500/50 resize-none"
                 required
               />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                Salvar
-              </button>
+              <div className="flex gap-2 shrink-0">
+                {editingId && (
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    className="px-3 py-2 rounded-lg border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 font-semibold text-sm transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors shrink-0"
+                >
+                  {editingId ? (
+                    <Pencil className="w-4 h-4" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  {editingId ? 'Atualizar Registro' : 'Salvar'}
+                </button>
+              </div>
             </div>
           </form>
 
@@ -273,14 +312,24 @@ export default function CodexModal({
                         <span />
                       )}
 
-                      <button
-                        type="button"
-                        onClick={() => onDeleteEntry(item.id)}
-                        className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Excluir da biblioteca"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(item)}
+                          className="p-1.5 rounded-md text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+                          title="Editar registro"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteEntry(item.id)}
+                          className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          title="Excluir da biblioteca"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

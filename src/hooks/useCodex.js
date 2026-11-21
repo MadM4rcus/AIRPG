@@ -67,7 +67,7 @@ export function useCodex(uid) {
     }
   };
 
-  const addCodexEntry = ({ category, name, tag, summary }) => {
+  const addCodexEntry = async ({ category, name, tag, summary }) => {
     const cleanTag = tag?.trim()
       ? tag.trim().startsWith('#')
         ? tag.trim()
@@ -75,16 +75,48 @@ export function useCodex(uid) {
       : `#${(name || 'Item').trim().replace(/\s+/g, '_')}`;
 
     const newEntry = {
-      id: `codex_${Date.now()}`,
+      id: `codex_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       category: category || 'NPC',
       name: name?.trim() || 'Sem Nome',
       tag: cleanTag,
       summary: summary?.trim() || '',
     };
 
-    persist([newEntry, ...codex]);
-    if (uid) saveCodexEntryToCloud(uid, newEntry);
+    setCodex((prev) => {
+      const next = [newEntry, ...prev];
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+    if (uid) await saveCodexEntryToCloud(uid, newEntry);
     return newEntry;
+  };
+
+  const updateCodexEntry = async (id, { category, name, tag, summary }) => {
+    const cleanTag = tag?.trim()
+      ? tag.trim().startsWith('#')
+        ? tag.trim()
+        : `#${tag.trim().replace(/\s+/g, '_')}`
+      : `#${(name || 'Item').trim().replace(/\s+/g, '_')}`;
+    const updatedEntry = {
+      category: category || 'NPC',
+      name: name?.trim() || 'Sem Nome',
+      tag: cleanTag,
+      summary: summary?.trim() || '',
+    };
+
+    setCodex((prev) => {
+      const next = prev.map((item) =>
+        item.id === id ? { ...item, ...updatedEntry } : item
+      );
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+
+    if (uid) await saveCodexEntryToCloud(uid, { id, ...updatedEntry });
   };
 
   const deleteCodexEntry = (id) => {
@@ -96,6 +128,7 @@ export function useCodex(uid) {
   return {
     codex,
     addCodexEntry,
+    updateCodexEntry,
     deleteCodexEntry,
     hydrateCodexFromCloud,
   };

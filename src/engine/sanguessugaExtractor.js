@@ -48,25 +48,39 @@ function parsePipeLines(rawText, defaultCategory = 'NPC') {
 
   for (const line of lines) {
     const clean = line.replace(/^[-*•\d.)\s]+/, '').trim();
-    if (!clean.includes('|')) continue;
+    if (!clean || clean.length < 8) continue;
 
-    const parts = clean.split('|').map((p) => p.trim());
-    if (parts.length >= 3) {
-      const firstUpper = parts[0].toUpperCase();
-      const hasCat = ['NPC', 'LOCAL', 'MUNDO'].includes(firstUpper);
-      const category = hasCat ? firstUpper : defaultCategory;
-      const name = hasCat ? parts[1] : parts[0];
-      const tag = hasCat ? parts[2] : parts[1];
-      const summary = hasCat ? parts.slice(3).join(' ') : parts.slice(2).join(' ');
+    // 1. Formato ideal com pipe: Name | #Tag | Summary (ou CATEGORY | Name | #Tag | Summary)
+    if (clean.includes('|')) {
+      const parts = clean.split('|').map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        const firstUpper = parts[0].toUpperCase();
+        const hasCat = ['NPC', 'LOCAL', 'MUNDO'].includes(firstUpper);
+        const category = hasCat ? firstUpper : defaultCategory;
+        const name = hasCat ? parts[1] : parts[0];
+        const tag = hasCat
+          ? (parts[2]?.startsWith('#') ? parts[2] : '#Lore')
+          : (parts[1]?.startsWith('#') ? parts[1] : '#Lore');
+        const summary = hasCat
+          ? (parts[2]?.startsWith('#') ? parts.slice(3).join(' ') : parts.slice(2).join(' '))
+          : (parts[1]?.startsWith('#') ? parts.slice(2).join(' ') : parts.slice(1).join(' '));
 
-      if (name && summary) {
-        items.push({
-          category,
-          name,
-          tag: tag.startsWith('#') ? tag : `#${tag.replace(/\s+/g, '')}`,
-          summary,
-        });
+        if (name && summary) {
+          items.push({ category, name, tag, summary });
+          continue;
+        }
       }
+    }
+
+    // 2. Fallback caso o modelo responda "Nome (Idade): Resumo..." sem usar |
+    const colonMatch = clean.match(/^([^:]{2,55}):\s+(.{10,})$/);
+    if (colonMatch) {
+      items.push({
+        category: defaultCategory,
+        name: colonMatch[1].trim(),
+        tag: defaultCategory === 'NPC' ? '#NPC' : '#Lore',
+        summary: colonMatch[2].trim(),
+      });
     }
   }
   return items;
