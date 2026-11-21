@@ -16,8 +16,8 @@ async function callLLMWithRetry(params, retries = 2) {
       return await callLLM(params);
     } catch (err) {
       const msg = String(err?.message || '');
-      if (msg.includes('429') && attempt < retries) {
-        await sleep(4500 * (attempt + 1));
+      if (attempt < retries && (msg.includes('429') || msg.includes('524') || msg.includes('Failed to fetch'))) {
+        await sleep(3500 * (attempt + 1));
         continue;
       }
       throw err;
@@ -42,19 +42,32 @@ function tryParseJson(rawText, fallback = null) {
   }
 }
 
-function extractItemsFallback(rawText) {
+function parsePipeLines(rawText, defaultCategory = 'NPC') {
+  const lines = (rawText || '').split(/\r?\n/);
   const items = [];
-  const itemRegex =
-    /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"name"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"tag"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"summary"\s*:\s*"((?:\\.|[^"\\])*)"\s*\}/g;
 
-  let match;
-  while ((match = itemRegex.exec(rawText || '')) !== null) {
-    items.push({
-      category: match[1],
-      name: match[2].replace(/\\"/g, '"'),
-      tag: match[3].replace(/\\"/g, '"'),
-      summary: match[4].replace(/\\"/g, '"'),
-    });
+  for (const line of lines) {
+    const clean = line.replace(/^[-*•\d.)\s]+/, '').trim();
+    if (!clean.includes('|')) continue;
+
+    const parts = clean.split('|').map((p) => p.trim());
+    if (parts.length >= 3) {
+      const firstUpper = parts[0].toUpperCase();
+      const hasCat = ['NPC', 'LOCAL', 'MUNDO'].includes(firstUpper);
+      const category = hasCat ? firstUpper : defaultCategory;
+      const name = hasCat ? parts[1] : parts[0];
+      const tag = hasCat ? parts[2] : parts[1];
+      const summary = hasCat ? parts.slice(3).join(' ') : parts.slice(2).join(' ');
+
+      if (name && summary) {
+        items.push({
+          category,
+          name,
+          tag: tag.startsWith('#') ? tag : `#${tag.replace(/\s+/g, '')}`,
+          summary,
+        });
+      }
+    }
   }
   return items;
 }
@@ -74,28 +87,24 @@ export async function extractBotAndCodexFromRawText({
     temperature: 0.2,
   };
 
-  // =========================================================================
-  // ETAPA 1: Extrai apenas metadados da cena + lista seca de NOMES de NPCs
-  // =========================================================================
-  onProgress?.('Passo 1/4 — Mapeando cena inicial e lista de personagens...');
+  // ETAPA 1: Premissa e abertura da cena
+  onProgress?.('Passo 1/4 — Extraindo premissa e abertura da cena...');
 
-  const plannerPrompt = `You are a Narrative Architect. Read the raw text and return ONLY valid JSON (no markdown).
+  const corePrompt = `You are a Narrative Architect. Extract ONLY the core session setup into valid JSON (no markdown).
 Structure:
 {
   "name": "Scenario or world title",
   "tag": "Short genre tag (e.g. Reality TV, Dark Fantasy)",
-  "personality": "Core premise, narrative tone, roleplay style rules, and dialogue formatting examples (max 5 sentences)",
+  "personality": "Core premise, POV rules, roleplay style rules, and dialogue formatting examples (max 6 sentences)",
   "scenario": "Opening setting, time, and initial situation (max 3 sentences)",
-  "firstMessage": "The full opening greeting/scene from the text",
-  "npcNames": ["Name 1", "Name 2", "Name 3"]
+  "firstMessage": "The full opening greeting/scene from the text"
 }
 Rules:
-- In "npcNames", list ONLY the plain names of ALL distinct characters/NPCs found in the text (e.g. ["Victoria Sloane", "Marlene Price", "Jessica Ward"]). Do NOT write descriptions here.
 - Preserve the ORIGINAL LANGUAGE of the text (keep English in English, Portuguese in Portuguese), unless an explicit instruction at the end specifies otherwise.
 - NEVER use unescaped double quotes inside JSON strings; use single quotes (') instead.`;
 
-  const plannerRes = await callLLMWithRetry({
-    systemPrompt: plannerPrompt,
+  const coreRes = await callLLMWithRetry({
+    systemPrompt: corePrompt,
     messages: [
       {
         role: 'user',
@@ -105,45 +114,48 @@ Rules:
     byokConfig: baseByok,
   });
 
-  const plan = tryParseJson(plannerRes, null);
+  const plan = tryParseJson(coreRes, null);
   if (!plan || (!plan.name && !plan.firstMessage)) {
-    throw new Error('Falha ao mapear a cena inicial. Verifique o modelo no BYOK.');
+    throw new Error('Falha ao extrair a cena inicial. Verifique o modelo no BYOK.');
   }
 
-  // Fatiamento determinístico: no máximo 4 NPCs por request (curto e ultrarrápido!)
-  const rawNames = Array.isArray(plan.npcNames)
-    ? [...new Set(plan.npcNames.map((n) => String(n).trim()).filter(Boolean))].slice(0, 28)
-    : [];
-  const npcBatches = chunkArray(rawNames, 4);
-  const totalSteps = npcBatches.length + 2;
+  // ETAPA 2: Lista seca de nomes (excluindo {{user}})
+  onProgress?.('Passo 2/4 — Mapeando personagens do texto...');
 
+  const namesPrompt = `List EVERY named NPC character in the text (do NOT include {{user}}).
+Output ONLY one name per line, nothing else. No bullets, no numbers, no JSON.`;
+
+  const namesRes = await callLLMWithRetry({
+    systemPrompt: namesPrompt,
+    messages: [{ role: 'user', content: fullText }],
+    byokConfig: baseByok,
+  });
+
+  const rawNames = [
+    ...new Set(
+      (namesRes || '')
+        .split(/\r?\n/)
+        .map((n) => n.replace(/^[-*•\d.)\s]+/, '').replace(/\(.*?\)/g, '').trim())
+        .filter((n) => n && !n.toLowerCase().includes('user'))
+    ),
+  ].slice(0, 24);
+
+  const npcBatches = chunkArray(rawNames, 4);
+  const totalSteps = npcBatches.length + 3;
   const allCodexItems = [];
 
-  // =========================================================================
-  // ETAPA 2..N: Extrai exatamente 4 NPCs por chamada (zero truncamento!)
-  // =========================================================================
+  // ETAPA 3..N: Extração por linhas pipe-separated (imune a quebra de JSON!)
   for (let i = 0; i < npcBatches.length; i++) {
     const batchNames = npcBatches[i];
     onProgress?.(
-      `Passo ${i + 2}/${totalSteps} — Extraindo NPCs (${i * 4 + 1}–${i * 4 + batchNames.length} de ${rawNames.length})...`
+      `Passo ${i + 3}/${totalSteps} — Extraindo NPCs (${i * 4 + 1}–${i * 4 + batchNames.length} de ${rawNames.length})...`
     );
 
-    const batchPrompt = `Extract profiles ONLY for these exact characters from the text: ${batchNames.join(', ')}.
-Return valid JSON only, no markdown:
-{
-  "items": [
-    {
-      "category": "NPC",
-      "name": "Full Name (Age/Role)",
-      "tag": "#ShortRoleTag",
-      "summary": "1-2 concise sentences merging ALL traits, appearance, role, and secrets of this character."
-    }
-  ]
-}
-Rules:
-- Extract ONLY the ${batchNames.length} requested characters.
-- Use single quotes (') instead of double quotes inside strings.
-- Keep the exact language of the source text.`;
+    const batchPrompt = `Extract profiles ONLY for these ${batchNames.length} characters: ${batchNames.join(', ')}.
+Output STRICTLY one line per character using this exact pipe-separated format (NO JSON, NO markdown):
+Name (Age/Role) | #ShortTag | 1-2 sentence summary of traits, role, and secrets.
+
+Keep the exact language of the source text.`;
 
     try {
       const res = await callLLMWithRetry({
@@ -151,35 +163,20 @@ Rules:
         messages: [{ role: 'user', content: fullText }],
         byokConfig: baseByok,
       });
-      const parsed = tryParseJson(res, null);
-      const items = Array.isArray(parsed?.items) ? parsed.items : extractItemsFallback(res);
-      allCodexItems.push(...items);
+      allCodexItems.push(...parsePipeLines(res, 'NPC'));
     } catch {
       // Continua para o próximo lote
     }
   }
 
-  // =========================================================================
-  // ETAPA FINAL: Extrai no máximo 5 regras/locais principais (resposta curta!)
-  // =========================================================================
+  // ETAPA FINAL: Regras e locais em linhas pipe-separated
   onProgress?.(`Passo ${totalSteps}/${totalSteps} — Extraindo regras do show e locais...`);
 
-  const worldPrompt = `Extract the top 4-5 most important LOCATIONS and WORLD/SHOW RULES from the text into valid JSON. No markdown.
-Structure:
-{
-  "items": [
-    {
-      "category": "LOCAL" | "MUNDO",
-      "name": "Location or System Name",
-      "tag": "#ShortTag",
-      "summary": "1 concise sentence explaining how this location or rule works."
-    }
-  ]
-}
-Rules:
-- Limit to maximum 5 items total, with 1-sentence summaries so the response stays fast.
-- Use single quotes (') instead of double quotes inside strings.
-- Keep the exact language of the source text.`;
+  const worldPrompt = `Extract the 3 to 5 most important LOCATIONS and WORLD/SHOW RULES from the text.
+Output STRICTLY one line per item using this exact pipe-separated format (NO JSON, NO markdown):
+LOCAL or MUNDO | Name | #ShortTag | 1 sentence explaining how this location or rule operates.
+
+Keep the exact language of the source text.`;
 
   try {
     const worldRes = await callLLMWithRetry({
@@ -187,11 +184,7 @@ Rules:
       messages: [{ role: 'user', content: fullText }],
       byokConfig: baseByok,
     });
-    const parsedWorld = tryParseJson(worldRes, null);
-    const worldItems = Array.isArray(parsedWorld?.items)
-      ? parsedWorld.items
-      : extractItemsFallback(worldRes);
-    allCodexItems.push(...worldItems);
+    allCodexItems.push(...parsePipeLines(worldRes, 'MUNDO'));
   } catch {
     // Segue com os itens extraídos
   }
