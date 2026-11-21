@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Upload,
@@ -32,6 +32,8 @@ export default function SanguessugaModal({
   // Estado da extração assistida por IA
   const [rawPaste, setRawPaste] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState({ step: 0, total: 4, label: '' });
+  const extractLockRef = useRef(false);
 
   // Estado manual
   const [name, setName] = useState('');
@@ -65,20 +67,40 @@ export default function SanguessugaModal({
 
   const handleSmartExtract = async (e) => {
     e.preventDefault();
-    if (!rawPaste.trim()) return;
-    const extractorByok = chronicleByokSettings?.isReady ? chronicleByokSettings : byokSettings;
-    if (!extractorByok?.isReady) {
-      setErrorMsg('Configure sua chave ou URL do túnel no botão BYOK antes de usar a extração com IA.');
-      return;
-    }
+    if (extractLockRef.current) return;
+    extractLockRef.current = true;
 
-    setErrorMsg('');
-    setIsExtracting(true);
     try {
+      if (!rawPaste.trim()) return;
+      const extractorByok = chronicleByokSettings?.isReady ? chronicleByokSettings : byokSettings;
+      if (!extractorByok?.isReady) {
+        setErrorMsg('Configure sua chave ou URL do túnel no botão BYOK antes de usar a extração com IA.');
+        return;
+      }
+
+      setErrorMsg('');
+      setIsExtracting(true);
+      setExtractProgress({ step: 1, total: 4, label: 'Analisando estrutura do mundo e abertura...' });
       const extracted = await extractBotAndCodexFromRawText({
         rawText: rawPaste,
         targetType: entityType,
         byokSettings: extractorByok,
+        onProgress: (progressText) => {
+          const match = progressText.match(/(\d+)\/(\d+)/);
+          const step = match ? Number(match[1]) : extractProgress.step;
+          const total = match ? Number(match[2]) : extractProgress.total;
+          const label = progressText
+            .replace(match?.[0] || '', '')
+            .replace(/^\s*Passo\s*/i, '')
+            .replace(/^\s*[—:-]\s*/, '')
+            .trim();
+
+          setExtractProgress({
+            step,
+            total,
+            label: label || progressText,
+          });
+        },
       });
 
       // Cria cada NPC, Local ou Regra extraída na Biblioteca Compartilhada e já fixa na sessão
@@ -115,6 +137,7 @@ export default function SanguessugaModal({
       setErrorMsg(err.message || 'Falha ao extrair dados com a IA.');
     } finally {
       setIsExtracting(false);
+      extractLockRef.current = false;
     }
   };
 
@@ -192,6 +215,19 @@ export default function SanguessugaModal({
   const extractorProviderLabel = chronicleByokSettings?.isReady
     ? 'BYOK'
     : `Agente: ${byokSettings?.provider?.toUpperCase() || 'NÃO CONFIGURADO'}`;
+
+  const extractionPercent = Math.min(
+    100,
+    Math.round((extractProgress.step / extractProgress.total) * 100)
+  );
+  const structureComplete = extractProgress.step >= 2;
+  const castComplete = extractProgress.step >= extractProgress.total - 1;
+  const worldComplete = extractProgress.step >= extractProgress.total;
+  const extractionSteps = [
+    { label: 'Estrutura & Abertura', complete: structureComplete },
+    { label: 'Elenco & NPCs', complete: castComplete },
+    { label: 'Regras & Locais', complete: worldComplete },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-4">
@@ -337,6 +373,41 @@ export default function SanguessugaModal({
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-500/50 resize-none"
                 required
               />
+              {isExtracting && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] text-amber-200 truncate">
+                      {extractProgress.label || 'Preparando extração...'}
+                    </p>
+                    <span className="text-[11px] font-bold text-amber-400 shrink-0">
+                      {extractionPercent}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 transition-all duration-500"
+                      style={{ width: `${extractionPercent}%` }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                    {extractionSteps.map((step) => (
+                      <div
+                        key={step.label}
+                        className={`flex items-center gap-1.5 text-[10px] ${
+                          step.complete ? 'text-emerald-400' : 'text-zinc-500'
+                        }`}
+                      >
+                        {step.complete ? (
+                          <Check className="w-3.5 h-3.5 shrink-0" />
+                        ) : (
+                          <span className="w-3.5 h-3.5 rounded-full border border-zinc-700 shrink-0" />
+                        )}
+                        <span>{step.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex justify-end">
                 <button
                   type="submit"

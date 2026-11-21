@@ -115,6 +115,51 @@ export async function fetchLiveOpenRouterFreeModels() {
     .sort((a, b) => (a.tier !== b.tier ? a.tier - b.tier : a.name.localeCompare(b.name)));
 }
 
+export async function fetchLiveProviderModels(provider, apiKey = '') {
+  if (provider === 'openrouter') {
+    return fetchLiveOpenRouterFreeModels();
+  }
+
+  if (provider === 'groq') {
+    if (!apiKey?.trim()) throw new Error('Informe a API Key do Groq do Cronista.');
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
+    });
+    if (!res.ok) throw new Error(`Falha ao consultar Groq (${res.status})`);
+    const json = await res.json();
+    const list = Array.isArray(json?.data) ? json.data : [];
+    return list
+      .filter((m) => m?.id)
+      .map((m) => ({ id: m.id, name: m.id }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  if (provider === 'gemini') {
+    if (!apiKey?.trim()) throw new Error('Informe a API Key do Google do Cronista.');
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}`
+    );
+    if (!res.ok) throw new Error(`Falha ao consultar Google Gemini (${res.status})`);
+    const json = await res.json();
+    const list = Array.isArray(json?.models) ? json.models : [];
+    return list
+      .filter((m) =>
+        Array.isArray(m?.supportedGenerationMethods)
+          ? m.supportedGenerationMethods.includes('generateContent')
+          : true
+      )
+      .map((m) => {
+        const fullName = m.name || '';
+        const id = fullName.startsWith('models/') ? fullName.slice(7) : fullName;
+        return { id, name: m.displayName ? `${m.displayName} (${id})` : id };
+      })
+      .filter((m) => m.id)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return [];
+}
+
 export function useBYOK(uid) {
   const storageKey = uid ? `airpg_byok_${uid}` : 'airpg_byok';
 

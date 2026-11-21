@@ -12,7 +12,11 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react';
-import { PROVIDERS, fetchLiveOpenRouterFreeModels } from '../hooks/useBYOK';
+import {
+  PROVIDERS,
+  fetchLiveOpenRouterFreeModels,
+  fetchLiveProviderModels,
+} from '../hooks/useBYOK';
 
 const PROVIDER_GUIDES = {
   openrouter: {
@@ -76,6 +80,9 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [fetchStatus, setFetchStatus] = useState('');
   const [modelSearch, setModelSearch] = useState('');
+  const [chronicleLiveModels, setChronicleLiveModels] = useState({});
+  const [isFetchingChronicleModels, setIsFetchingChronicleModels] = useState(false);
+  const [chronicleFetchStatus, setChronicleFetchStatus] = useState('');
 
   useEffect(() => {
     setForm(settings);
@@ -116,6 +123,44 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
     }
   };
 
+  const handleFetchChronicleModels = async () => {
+    setIsFetchingChronicleModels(true);
+    setChronicleFetchStatus('');
+    try {
+      const provider = form.chronicleProvider;
+      const models =
+        provider === 'openrouter'
+          ? await fetchLiveOpenRouterFreeModels()
+          : await fetchLiveProviderModels(provider, form.chronicleApiKey);
+
+      setChronicleLiveModels((prev) => ({ ...prev, [provider]: models }));
+
+      if (provider === 'openrouter') {
+        setLiveFreeModels(models);
+        try {
+          localStorage.setItem(LIVE_CACHE_KEY, JSON.stringify(models));
+        } catch (e) {}
+      }
+
+      if (models.length > 0) {
+        setChronicleFetchStatus(`${models.length} modelos encontrados!`);
+        const stillExists = models.some((m) => m.id === form.chronicleModel);
+        if (!stillExists) {
+          setForm((prev) => ({
+            ...prev,
+            chronicleModel: models[0].id,
+          }));
+        }
+      } else {
+        setChronicleFetchStatus('Nenhum modelo encontrado agora.');
+      }
+    } catch (err) {
+      setChronicleFetchStatus(err.message || 'Erro ao buscar modelos.');
+    } finally {
+      setIsFetchingChronicleModels(false);
+    }
+  };
+
   const getOpenRouterOptions = () => {
     const paidAndFallback = PROVIDERS.openrouter.models.filter(
       (m) => !m.id.endsWith(':free')
@@ -145,8 +190,16 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
 
   const chronicleOptions =
     form.chronicleProvider === 'openrouter'
-      ? getOpenRouterOptions().filter((m) => m.id !== 'custom')
-      : chronicleProvider.models;
+      ? (
+          chronicleLiveModels.openrouter?.length
+            ? chronicleLiveModels.openrouter
+            : liveFreeModels.length
+              ? liveFreeModels
+              : PROVIDERS.openrouter.models.filter((m) => m.id.endsWith(':free'))
+        ).filter((m) => m.id !== 'custom')
+      : chronicleLiveModels[form.chronicleProvider]?.length
+        ? chronicleLiveModels[form.chronicleProvider]
+        : chronicleProvider.models;
 
   const handleProviderChange = (newProviderId) => {
     const prov = PROVIDERS[newProviderId];
@@ -186,7 +239,7 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[92dvh] flex flex-col">
         <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/50 shrink-0">
           <div className="flex items-center gap-2">
@@ -454,9 +507,23 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-semibold text-zinc-400 block mb-1">
-                      Modelo Cronista
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-semibold text-zinc-400">
+                        Modelo Cronista
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleFetchChronicleModels}
+                        disabled={isFetchingChronicleModels}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[9px] font-bold transition disabled:opacity-50"
+                        title="Atualizar modelos via API do provedor Cronista"
+                      >
+                        <RefreshCw
+                          className={`w-3 h-3 ${isFetchingChronicleModels ? 'animate-spin' : ''}`}
+                        />
+                        {isFetchingChronicleModels ? 'Buscando' : 'Atualizar'}
+                      </button>
+                    </div>
                     <select
                       value={form.chronicleModel}
                       onChange={(e) =>
@@ -472,6 +539,12 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
                     </select>
                   </div>
                 </div>
+
+                {chronicleFetchStatus && (
+                  <p className="text-[10px] text-emerald-400 font-medium">
+                    {chronicleFetchStatus}
+                  </p>
+                )}
 
                 <div>
                   <label className="text-[10px] font-semibold text-zinc-400 block mb-1">
