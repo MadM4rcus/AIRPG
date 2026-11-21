@@ -1,5 +1,30 @@
 import { callLLM } from '../services/llmService';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function chunkArray(arr, size) {
+  const result = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
+
+async function callLLMWithRetry(params, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await callLLM(params);
+    } catch (err) {
+      const msg = String(err?.message || '');
+      if (msg.includes('429') && attempt < retries) {
+        await sleep(4500 * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 function tryParseJson(rawText, fallback = null) {
   const cleaned = (rawText || '')
     .replace(/```json\s*/gi, '')
@@ -50,32 +75,26 @@ export async function extractBotAndCodexFromRawText({
   };
 
   // =========================================================================
-  // ETAPA 1 (IA PLANEJADORA): Entende o cenário, separa abertura/estilo e
-  // planeja quais grupos semânticos existem no texto para extrair depois.
+  // ETAPA 1: Extrai apenas metadados da cena + lista seca de NOMES de NPCs
   // =========================================================================
-  onProgress?.('1/4 — Analisando estrutura do mundo e abertura...');
+  onProgress?.('Passo 1/4 — Mapeando cena inicial e lista de personagens...');
 
-  const plannerPrompt = `You are a Narrative Architect. Read the raw roleplay prompt and extract ONLY the core session setup (do NOT list individual NPCs yet). Return valid JSON only, no markdown.
-
-JSON structure:
+  const plannerPrompt = `You are a Narrative Architect. Read the raw text and return ONLY valid JSON (no markdown).
+Structure:
 {
   "name": "Scenario or world title",
-  "tag": "Short genre tag (e.g., Reality TV, Dark Fantasy)",
-  "personality": "Core premise, narrative tone, roleplay style rules, and any dialogue formatting examples (max 6 sentences)",
-  "scenario": "Opening setting, time, and situation (max 3 sentences)",
-  "firstMessage": "The full opening greeting/scene from the text (preserve line breaks and dialogue)",
-  "characterGroups": [
-    "Short description of group 1 of characters to extract (e.g., 'Main contestants')",
-    "Short description of group 2 of characters to extract (e.g., 'TV host, producers and crew')"
-  ]
+  "tag": "Short genre tag (e.g. Reality TV, Dark Fantasy)",
+  "personality": "Core premise, narrative tone, roleplay style rules, and dialogue formatting examples (max 5 sentences)",
+  "scenario": "Opening setting, time, and initial situation (max 3 sentences)",
+  "firstMessage": "The full opening greeting/scene from the text",
+  "npcNames": ["Name 1", "Name 2", "Name 3"]
 }
-
 Rules:
+- In "npcNames", list ONLY the plain names of ALL distinct characters/NPCs found in the text (e.g. ["Victoria Sloane", "Marlene Price", "Jessica Ward"]). Do NOT write descriptions here.
 - Preserve the ORIGINAL LANGUAGE of the text (keep English in English, Portuguese in Portuguese), unless an explicit instruction at the end specifies otherwise.
-- NEVER use unescaped double quotes inside JSON string values; use single quotes (') instead.
-- Keep "characterGroups" to 1-3 distinct semantic groups so each group can be extracted cleanly in small batches.`;
+- NEVER use unescaped double quotes inside JSON strings; use single quotes (') instead.`;
 
-  const plannerRes = await callLLM({
+  const plannerRes = await callLLMWithRetry({
     systemPrompt: plannerPrompt,
     messages: [
       {
@@ -88,27 +107,28 @@ Rules:
 
   const plan = tryParseJson(plannerRes, null);
   if (!plan || (!plan.name && !plan.firstMessage)) {
-    throw new Error(
-      'O modelo falhou ao estruturar a cena inicial (resposta vazia ou inválida). Tente outro modelo rápido.'
-    );
+    throw new Error('Falha ao mapear a cena inicial. Verifique o modelo no BYOK.');
   }
 
-  const groups =
-    Array.isArray(plan.characterGroups) && plan.characterGroups.length > 0
-      ? plan.characterGroups.slice(0, 3)
-      : ['All named characters and NPCs'];
+  // Fatiamento determinístico: no máximo 4 NPCs por request (curto e ultrarrápido!)
+  const rawNames = Array.isArray(plan.npcNames)
+    ? [...new Set(plan.npcNames.map((n) => String(n).trim()).filter(Boolean))].slice(0, 28)
+    : [];
+  const npcBatches = chunkArray(rawNames, 4);
+  const totalSteps = npcBatches.length + 2;
 
-  const totalSteps = groups.length + 2;
   const allCodexItems = [];
 
   // =========================================================================
-  // ETAPA 2..N (EXTRATORES DE PERSONAGENS POR GRUPO SEMÂNTICO)
+  // ETAPA 2..N: Extrai exatamente 4 NPCs por chamada (zero truncamento!)
   // =========================================================================
-  for (let i = 0; i < groups.length; i++) {
-    const groupLabel = groups[i];
-    onProgress?.(`Passo ${i + 2}/${totalSteps} — Extraindo: ${groupLabel}...`);
+  for (let i = 0; i < npcBatches.length; i++) {
+    const batchNames = npcBatches[i];
+    onProgress?.(
+      `Passo ${i + 2}/${totalSteps} — Extraindo NPCs (${i * 4 + 1}–${i * 4 + batchNames.length} de ${rawNames.length})...`
+    );
 
-    const groupPrompt = `You are a Lore Extractor. Read the text and extract ONLY the characters belonging to this specific group: "${groupLabel}".
+    const batchPrompt = `Extract profiles ONLY for these exact characters from the text: ${batchNames.join(', ')}.
 Return valid JSON only, no markdown:
 {
   "items": [
@@ -116,80 +136,71 @@ Return valid JSON only, no markdown:
       "category": "NPC",
       "name": "Full Name (Age/Role)",
       "tag": "#ShortRoleTag",
-      "summary": "1-2 dense sentences combining ALL details about this character from anywhere in the text (personality, role, secrets, behavior)."
+      "summary": "1-2 concise sentences merging ALL traits, appearance, role, and secrets of this character."
     }
   ]
 }
 Rules:
-- Only include characters from the requested group ("${groupLabel}").
-- If a character is mentioned in multiple sections, merge their traits into ONE complete entry.
+- Extract ONLY the ${batchNames.length} requested characters.
 - Use single quotes (') instead of double quotes inside strings.
 - Keep the exact language of the source text.`;
 
     try {
-      const groupRes = await callLLM({
-        systemPrompt: groupPrompt,
+      const res = await callLLMWithRetry({
+        systemPrompt: batchPrompt,
         messages: [{ role: 'user', content: fullText }],
         byokConfig: baseByok,
       });
-      const parsedGroup = tryParseJson(groupRes, null);
-      const batch = Array.isArray(parsedGroup?.items)
-        ? parsedGroup.items
-        : extractItemsFallback(groupRes);
-      allCodexItems.push(...batch);
+      const parsed = tryParseJson(res, null);
+      const items = Array.isArray(parsed?.items) ? parsed.items : extractItemsFallback(res);
+      allCodexItems.push(...items);
     } catch {
-      // Continua os próximos grupos mesmo se um falhar
+      // Continua para o próximo lote
     }
   }
 
   // =========================================================================
-  // ETAPA FINAL (EXTRATOR DE REGRAS, SISTEMAS E LOCAIS DO MUNDO)
+  // ETAPA FINAL: Extrai no máximo 5 regras/locais principais (resposta curta!)
   // =========================================================================
   onProgress?.(`Passo ${totalSteps}/${totalSteps} — Extraindo regras do show e locais...`);
 
-  const worldPrompt = `You are a World-Building Archivist. Read the text and extract ONLY the key LOCATIONS and WORLD/GAME SYSTEMS (e.g., voting mechanics, prize rules, manipulation rules, cameras/privacy, setting details). Do NOT include individual characters.
-Return valid JSON only, no markdown:
+  const worldPrompt = `Extract the top 4-5 most important LOCATIONS and WORLD/SHOW RULES from the text into valid JSON. No markdown.
+Structure:
 {
   "items": [
     {
       "category": "LOCAL" | "MUNDO",
-      "name": "Location or System/Rule Name",
-      "tag": "#SystemOrPlace",
-      "summary": "1-2 dense sentences explaining how this place or rule operates in the simulation."
+      "name": "Location or System Name",
+      "tag": "#ShortTag",
+      "summary": "1 concise sentence explaining how this location or rule works."
     }
   ]
 }
 Rules:
-- Use "LOCAL" for physical places/settings and "MUNDO" for rules, mechanics, and lore systems.
+- Limit to maximum 5 items total, with 1-sentence summaries so the response stays fast.
 - Use single quotes (') instead of double quotes inside strings.
 - Keep the exact language of the source text.`;
 
   try {
-    const worldRes = await callLLM({
+    const worldRes = await callLLMWithRetry({
       systemPrompt: worldPrompt,
       messages: [{ role: 'user', content: fullText }],
       byokConfig: baseByok,
     });
     const parsedWorld = tryParseJson(worldRes, null);
-    const worldBatch = Array.isArray(parsedWorld?.items)
+    const worldItems = Array.isArray(parsedWorld?.items)
       ? parsedWorld.items
       : extractItemsFallback(worldRes);
-    allCodexItems.push(...worldBatch);
+    allCodexItems.push(...worldItems);
   } catch {
-    // Segue com os itens já coletados
+    // Segue com os itens extraídos
   }
 
-  // =========================================================================
-  // CONSOLIDAÇÃO: Normaliza e funde duplicatas pelo nome base
-  // =========================================================================
+  // Consolidação e deduplicação
   const mergedMap = new Map();
   for (const item of allCodexItems) {
     if (!item?.name) continue;
-    const baseKey = item.name
-      .replace(/\s*\(.*?\)\s*/g, '')
-      .trim()
-      .toLowerCase();
-
+    const baseKey = item.name.replace(/\s*\(.*?\)\s*/g, '').trim().toLowerCase();
     if (!mergedMap.has(baseKey)) {
       mergedMap.set(baseKey, {
         category: ['NPC', 'LOCAL', 'MUNDO'].includes(item.category) ? item.category : 'NPC',
@@ -197,13 +208,6 @@ Rules:
         tag: item.tag || '#Lore',
         summary: (item.summary || '').trim(),
       });
-    } else {
-      // Se o mesmo personagem apareceu em dois grupos, mantém a descrição mais rica
-      const existing = mergedMap.get(baseKey);
-      if ((item.summary || '').length > existing.summary.length) {
-        existing.summary = item.summary.trim();
-        existing.name = item.name.trim();
-      }
     }
   }
 
