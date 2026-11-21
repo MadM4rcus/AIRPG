@@ -28,6 +28,7 @@ export default function CodexModal({
   pinnedIds = [],
   onTogglePin,
   activeSessionName = '',
+  onOpenLightbox,
 }) {
   const [filterCat, setFilterCat] = useState('ALL');
   const [search, setSearch] = useState('');
@@ -259,6 +260,9 @@ export default function CodexModal({
                   CATEGORIES.find((c) => c.id === item.category) || CATEGORIES[0];
                 const Icon = catMeta.icon;
                 const isPinned = pinnedSet.has(item.id);
+                const imageUrl = [item.imageUrl, item.image, item.avatar].find(
+                  (value) => typeof value === 'string' && value.startsWith('http')
+                );
 
                 return (
                   <div
@@ -270,6 +274,24 @@ export default function CodexModal({
                     }`}
                   >
                     <div>
+                      {imageUrl && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenLightbox?.([
+                              { url: imageUrl, title: item.name, subtitle: item.tag },
+                            ])
+                          }
+                          className="mb-2 block h-32 w-full overflow-hidden rounded-lg border border-zinc-800 cursor-zoom-in"
+                          aria-label={`Abrir imagem de ${item.name} em tela cheia`}
+                        >
+                          <img
+                            src={imageUrl}
+                            alt={item.name}
+                            className="h-full w-full object-cover"
+                          />
+                        </button>
+                      )}
                       <div className="flex items-start justify-between gap-2 mb-1.5">
                         <div className="flex items-center gap-2 min-w-0">
                           <span

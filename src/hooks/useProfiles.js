@@ -182,11 +182,11 @@ export function useProfiles(uid) {
     persistPersonas(filtered, nextActive);
   };
 
-  const addProfile = (profileData) => {
+  const addProfile = (profileData, { syncToCloud = true } = {}) => {
     const isRpg = profileData.type === 'rpg';
     const newItem = {
       ...profileData,
-      id: `${isRpg ? 'camp' : 'char'}_${Date.now()}`,
+      id: profileData.id || `${isRpg ? 'camp' : 'char'}_${Date.now()}`,
       type: isRpg ? 'rpg' : 'chat',
     };
 
@@ -204,9 +204,47 @@ export function useProfiles(uid) {
       } catch (e) {}
     }
 
-    if (uid) saveEntityToCloud(uid, newItem);
+    if (uid && syncToCloud) saveEntityToCloud(uid, newItem);
     setActiveProfileId(newItem.id);
     return newItem;
+  };
+
+  const updateProfile = async (profileId, updates) => {
+    const profile = [...characters, ...campaigns].find(
+      (item) => item.id === profileId
+    );
+    if (!profile) {
+      throw new Error('Não foi possível encontrar a sessão para atualizar.');
+    }
+
+    const updatedProfile = { ...profile, ...updates };
+    if (profile.type === 'rpg') {
+      const next = campaigns.map((item) =>
+        item.id === profileId ? updatedProfile : item
+      );
+      setCampaigns(next);
+      try {
+        localStorage.setItem(campsKey, JSON.stringify(next));
+      } catch (error) {
+        console.warn('Erro ao salvar campanhas localmente:', error);
+      }
+    } else {
+      const next = characters.map((item) =>
+        item.id === profileId ? updatedProfile : item
+      );
+      setCharacters(next);
+      try {
+        localStorage.setItem(charsKey, JSON.stringify(next));
+      } catch (error) {
+        console.warn('Erro ao salvar conversas localmente:', error);
+      }
+    }
+
+    if (uid && !(await saveEntityToCloud(uid, updatedProfile))) {
+      throw new Error('Capa salva localmente, mas não foi sincronizada com a nuvem.');
+    }
+
+    return updatedProfile;
   };
 
   const deleteProfile = (id, type) => {
@@ -284,6 +322,7 @@ export function useProfiles(uid) {
     activeProfileId,
     setActiveProfileId,
     addProfile,
+    updateProfile,
     deleteProfile,
     personas,
     activePersonaId,

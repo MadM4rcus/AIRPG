@@ -12,6 +12,7 @@ export function buildChatSystemPrompt({
   chronicle = '',
   userPersona = {},
   godMode = false,
+  directorFocusNpc = null,
 }) {
   const codexBlock =
     codexContext.length > 0
@@ -27,6 +28,16 @@ export function buildChatSystemPrompt({
 
   const chronicleBlock = chronicle?.trim()
     ? `\n[MEMÓRIA DO PASSADO — THE CHRONICLE]\n${chronicle.trim()}\n`
+    : '';
+  const multiCharacterFormatRule = `[FORMATO DE FALAS MULTI-PERSONAGEM]
+- Sempre que um NPC falar ou agir, comece um novo bloco/linha com **[Nome do Personagem]:**.
+- Use blocos sem prefixo apenas para narração breve de ambiente ou cena.
+- Mantenha as trocas dinâmicas e naturais; evite monólogos gigantes.`;
+  const directorFocusBlock = directorFocusNpc
+    ? `[FOCO MÁXIMO DO DIRETOR DE CENA — PRIORIDADE NARRATIVA]
+Ficha completa do NPC selecionado:
+${JSON.stringify(directorFocusNpc, null, 2)}
+No próximo turno, dê o protagonismo e a próxima fala/ação a ${directorFocusNpc.name || 'este NPC'}. Se ele ainda não estiver presente, faça-o entrar na cena de forma natural. Preserve a agência do jogador e não narre ações ou falas por ele.`
     : '';
 
   const agencyRule = godMode
@@ -59,6 +70,8 @@ ${codexBlock}
 ${vaultBlock}
 
 ${agencyRule}
+${multiCharacterFormatRule}
+${directorFocusBlock}
 
 [PROTOCOLO DE MEMÓRIA SILENCIOSA]
 Se surgir um fato novo e permanente (mudança de humor de um NPC, segredo revelado, novo local visitado), anexe no final:

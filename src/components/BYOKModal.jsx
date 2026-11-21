@@ -17,6 +17,10 @@ import {
   fetchLiveOpenRouterFreeModels,
   fetchLiveProviderModels,
 } from '../hooks/useBYOK';
+import {
+  getImgbbApiKey,
+  setImgbbApiKey,
+} from '../services/imageUploadService';
 
 const PROVIDER_GUIDES = {
   openrouter: {
@@ -67,6 +71,7 @@ const LIVE_CACHE_KEY = 'airpg_openrouter_live_free_v2';
 
 export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
   const [form, setForm] = useState(settings);
+  const [imgbbApiKey, setImgBBApiKey] = useState('');
   const [showGuide, setShowGuide] = useState(!settings.apiKey && !settings.customEndpointUrl);
 
   const [liveFreeModels, setLiveFreeModels] = useState(() => {
@@ -86,6 +91,7 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
 
   useEffect(() => {
     setForm(settings);
+    setImgBBApiKey(getImgbbApiKey());
     if (!settings.apiKey && !settings.customEndpointUrl) setShowGuide(true);
   }, [settings, isOpen]);
 
@@ -234,6 +240,7 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setImgbbApiKey(imgbbApiKey);
     onSave(form);
     onClose();
   };
@@ -353,6 +360,33 @@ export default function BYOKModal({ isOpen, onClose, settings, onSave }) {
               />
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <label
+              htmlFor="imgbb-api-key"
+              className="text-xs font-semibold text-zinc-300"
+            >
+              ImgBB API Key (Hospedagem de Imagens &amp; GIFs)
+            </label>
+            <input
+              id="imgbb-api-key"
+              type="password"
+              autoComplete="off"
+              value={imgbbApiKey}
+              onChange={(e) => setImgBBApiKey(e.target.value)}
+              placeholder="Chave ImgBB (opcional)"
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 font-mono"
+            />
+            <a
+              href="https://api.imgbb.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] text-amber-400 hover:text-amber-300"
+            >
+              Obter uma chave gratuita no ImgBB
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
 
           {form.provider === 'openrouter' && (
             <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3 space-y-2">

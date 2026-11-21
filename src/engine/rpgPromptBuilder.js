@@ -12,6 +12,7 @@ export function buildRpgSystemPrompt({
   userPersona = {},
   characterSheet = null,
   godMode = false,
+  directorFocusNpc = null,
 }) {
   const codexBlock =
     codexContext.length > 0
@@ -27,6 +28,17 @@ export function buildRpgSystemPrompt({
 
   const chronicleBlock = chronicle?.trim()
     ? `\n[CRÔNICA DA CAMPANHA — PASSADO COMPRIMIDO]\n${chronicle.trim()}\n`
+    : '';
+  const multiCharacterFormatRule = `[FORMATO DE FALAS MULTI-PERSONAGEM]
+- Sempre que um NPC falar ou agir, comece um novo bloco/linha com **[Nome do Personagem]:**.
+- Use blocos sem prefixo apenas para narração breve de ambiente ou cena.
+- Mantenha as trocas dinâmicas e naturais; evite monólogos gigantes.
+- Preserve as regras PbtA e os resultados das rolagens ao narrar as ações dos NPCs.`;
+  const directorFocusBlock = directorFocusNpc
+    ? `[FOCO MÁXIMO DO DIRETOR DE CENA — PRIORIDADE NARRATIVA]
+Ficha completa do NPC selecionado:
+${JSON.stringify(directorFocusNpc, null, 2)}
+No próximo turno, dê o protagonismo e a próxima fala/ação a ${directorFocusNpc.name || 'este NPC'}. Se ele ainda não estiver presente, faça-o entrar na cena de forma natural, respeitando a cena, a ficha e as regras PbtA. Não narre ações ou falas pelo jogador.`
     : '';
 
   let sheetBlock = 'Ficha não carregada.';
@@ -75,6 +87,8 @@ ${codexBlock}
 ${vaultBlock}
 
 ${judgeRule}
+${multiCharacterFormatRule}
+${directorFocusBlock}
 
 [PROTOCOLO DE MEMÓRIA SILENCIOSA]
 Se surgir um fato permanente (novo NPC, local descoberto, ferimento grave, dívida, item importante), anexe no final:

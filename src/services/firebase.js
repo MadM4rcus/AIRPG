@@ -15,6 +15,7 @@ import {
   collection,
   getDocs,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -183,6 +184,94 @@ export async function saveChatSessionToCloud(uid, sessionId, messages, vault, ch
     console.warn('Erro ao salvar sessão de chat na nuvem:', err);
     return false;
   }
+}
+
+export async function publishWorldToCloud(uid, draft) {
+  if (!uid) throw new Error('É necessário estar conectado para publicar um mundo.');
+  if (!draft?.name?.trim()) throw new Error('O mundo precisa ter um título.');
+
+  const type = draft.type === 'rpg' ? 'rpg' : 'chat';
+  const collectionName = type === 'rpg' ? 'campaigns' : 'characters';
+  const worldRef = doc(collection(db, 'airpg_users', uid, collectionName));
+  const chatRef = doc(db, 'airpg_users', uid, 'chats', worldRef.id);
+  const batch = writeBatch(db);
+  const pinnedCodexIds = new Set();
+  const createdCodexEntries = [];
+
+  const addCodexItem = (item, category) => {
+    const codexId = typeof item.codexId === 'string' ? item.codexId.trim() : '';
+    if (codexId) {
+      pinnedCodexIds.add(codexId);
+      return;
+    }
+
+    const name = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!name) return;
+
+    const codexRef = doc(collection(db, 'airpg_users', uid, 'codex'));
+    const entry = {
+      id: codexRef.id,
+      category,
+      name,
+      tag: `#${name.replace(/\s+/g, '_')}`,
+      summary: typeof item.description === 'string' ? item.description.trim() : '',
+      ...(category === 'NPC' && typeof item.avatarUrl === 'string'
+        ? { avatarUrl: item.avatarUrl }
+        : {}),
+    };
+
+    batch.set(codexRef, { ...entry, updatedAt: serverTimestamp() });
+    pinnedCodexIds.add(entry.id);
+    createdCodexEntries.push(entry);
+  };
+
+  (Array.isArray(draft.npcs) ? draft.npcs : []).forEach((npc) =>
+    addCodexItem(npc, 'NPC')
+  );
+  (Array.isArray(draft.loreItems) ? draft.loreItems : []).forEach((item) =>
+    addCodexItem(item, item.category === 'MUNDO' ? 'MUNDO' : 'LOCAL')
+  );
+
+  if (createdCodexEntries.length + 2 > 500) {
+    throw new Error('O mundo excede o limite de itens que podem ser publicados de uma vez.');
+  }
+
+  const description =
+    typeof draft.description === 'string' ? draft.description.trim() : '';
+  const tagline = typeof draft.tagline === 'string' ? draft.tagline.trim() : '';
+  const coverUrl = typeof draft.coverUrl === 'string' ? draft.coverUrl : '';
+  const firstMessage =
+    typeof draft.firstMessage === 'string' ? draft.firstMessage.trim() : '';
+  const world = {
+    id: worldRef.id,
+    type,
+    name: draft.name.trim(),
+    tag: tagline,
+    tagline,
+    coverUrl,
+    avatarUrl: coverUrl,
+    avatar: coverUrl || (type === 'rpg' ? '⚔️' : '🎭'),
+    description,
+    scenario: description,
+    personality: tagline || description,
+    firstMessage,
+    pinnedCodexIds: [...pinnedCodexIds],
+    initialVault: [],
+  };
+  const messages = firstMessage
+    ? [{ role: 'assistant', content: firstMessage }]
+    : [];
+
+  batch.set(worldRef, { ...world, updatedAt: serverTimestamp() });
+  batch.set(chatRef, {
+    messages,
+    vault: [],
+    chronicle: '',
+    updatedAt: serverTimestamp(),
+  });
+
+  await batch.commit();
+  return { world, codexEntries: createdCodexEntries, messages };
 }
 
 // =====================================================================

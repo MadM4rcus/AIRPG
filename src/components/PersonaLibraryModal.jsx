@@ -16,6 +16,7 @@ export default function PersonaLibraryModal({
   onSelectPersona,
   onSavePersona,
   onDeletePersona,
+  onOpenLightbox,
 }) {
   const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState('');
@@ -97,8 +98,26 @@ export default function PersonaLibraryModal({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-lg shrink-0">
-                        {p.avatar || '🧑'}
+                      <span className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-lg shrink-0 overflow-hidden">
+                        {typeof p.avatar === 'string' && p.avatar.startsWith('http') ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenLightbox?.([{ url: p.avatar, title: p.name }]);
+                            }}
+                            className="w-full h-full cursor-zoom-in"
+                            aria-label={`Abrir imagem de ${p.name} em tela cheia`}
+                          >
+                            <img
+                              src={p.avatar}
+                              alt={p.name}
+                              className="w-full h-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          p.avatar || '🧑'
+                        )}
                       </span>
                       <div className="min-w-0">
                         <h3 className="text-xs font-bold text-zinc-100 truncate">

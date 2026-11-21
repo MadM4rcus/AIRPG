@@ -26,8 +26,28 @@ export function buildSystemPrompt({
   godMode = false,
   firstMessage = '',
   lastUserMessage = '',
+  responseLength = 2,
+  directorFocusNpc = null,
 }) {
   const lang = detectConversationLanguage(firstMessage, lastUserMessage);
+  const responseLengthRules = {
+    1: 'RESPONSE LENGTH RULE: Keep your response concise and punchy — strictly 1 to 2 short paragraphs (around 100–150 words). Do not write long walls of text; leave room for the player to react.',
+    2: 'RESPONSE LENGTH RULE: Write 2 to 3 paragraphs (around 200–300 words). Keep the scene focused and leave room for the player to react.',
+    3: 'RESPONSE LENGTH RULE: Write 4 to 5 paragraphs (around 350–450 words). Develop the scene richly without exceeding this target; leave room for the player to react.',
+    4: 'RESPONSE LENGTH RULE: Write at least 6 paragraphs as an extensive, detailed narrative. Keep the scene immersive while still leaving a natural opening for the player to react.',
+  };
+  const responseLengthRule =
+    responseLengthRules[responseLength] || responseLengthRules[2];
+  const multiCharacterFormatRule = `MULTI-CHARACTER FORMAT RULE:
+- Whenever an NPC speaks or acts, begin a new block/line with **[Character Name]:**.
+- Use unprefixed blocks only for brief scene or environmental narration.
+- Keep character exchanges dynamic and natural; avoid giant monologues.`;
+  const directorFocusBlock = directorFocusNpc
+    ? `SCENE DIRECTOR FOCUS — HIGHEST NARRATIVE PRIORITY:
+Full NPC profile:
+${JSON.stringify(directorFocusNpc, null, 2)}
+Give this NPC the protagonism and next speaking/action turn. If they are not yet present, bring them into the scene naturally. Do not speak or act for the player.`
+    : '';
 
   const languageRule =
     lang === 'en'
@@ -64,7 +84,10 @@ export function buildSystemPrompt({
 
   const coreFictionalFraming = `${safetyAndConsentFraming}
 ${languageRule}
-${agencyRule}`;
+${agencyRule}
+${responseLengthRule}
+${multiCharacterFormatRule}
+${directorFocusBlock}`;
 
   const stateOutputInstruction = `
 FORMATO DE MEMÓRIA (OPCIONAL): Se um fato permanente relevante mudar na cena (um novo segredo, ferimento, item obtido ou mudança de local), adicione no final da sua resposta um bloco JSON oculto exatamente neste formato:
